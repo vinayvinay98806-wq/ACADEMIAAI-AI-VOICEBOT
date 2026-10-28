@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "academiaai-voicebot"
+version = "0.1.0"
+description = "Academiaai AI Voice Co-Pilot - Audio Input & Voice Activity Detection"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+audio-demo = "academiaai.audio.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
