@@ -1,0 +1,55 @@
+.gitignore:18: new blank line at EOF.
+AGENTS.md:29: new blank line at EOF.
+README.md:3: trailing whitespace.
+[32m+[m[32m**Module:** `w3_context_reasoning`[m[41m  [m
+README.md:4: trailing whitespace.
+[32m+[m[32m**Milestone:** Week 1 Local Development[m[41m  [m
+README.md:95: new blank line at EOF.
+demo.py:111: new blank line at EOF.
+tests/__init__.py:2: new blank line at EOF.
+tests/test_mock_reasoning.py:110: new blank line at EOF.
+tests/test_prompt_versioning.py:32: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_prompt_versioning.py:35: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_prompt_versioning.py:39: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_prompt_versioning.py:58: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_prompt_versioning.py:67: new blank line at EOF.
+tests/test_safe_capture_defaults.py:45: new blank line at EOF.
+tests/test_schemas.py:28: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_schemas.py:32: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_schemas.py:64: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_schemas.py:75: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_schemas.py:104: trailing whitespace.
+[32m+[m[41m        [m
+tests/test_schemas.py:113: new blank line at EOF.
+tests/test_validation.py:155: new blank line at EOF.
+w3_context_reasoning/__init__.py:52: new blank line at EOF.
+w3_context_reasoning/engine.py:84: trailing whitespace.
+[32m+[m[41m        [m
+w3_context_reasoning/fixtures.py:61: trailing whitespace.
+[32m+[m[41m    [m
+w3_context_reasoning/fixtures.py:153: new blank line at EOF.
+w3_context_reasoning/prompts/__init__.py:8: new blank line at EOF.
+w3_context_reasoning/prompts/v1/system_prompt.txt:9: new blank line at EOF.
+w3_context_reasoning/prompts/v1/template.json:22: new blank line at EOF.
+w3_context_reasoning/schemas.py:76: trailing whitespace.
+[32m+[m[41m    [m
+w3_context_reasoning/schemas.py:136: trailing whitespace.
+[32m+[m[41m        [m
+w3_context_reasoning/schemas.py:139: trailing whitespace.
+[32m+[m[41m        [m
+w3_context_reasoning/schemas.py:142: trailing whitespace.
+[32m+[m[41m        [m
+w3_context_reasoning/schemas.py:188: new blank line at EOF.
+w3_context_reasoning/validation.py:75: trailing whitespace.
+[32m+[m[41m    [m
+w3_context_reasoning/validation.py:107: trailing whitespace.
+[32m+[m[41m    [m
+w3_context_reasoning/validation.py:151: new blank line at EOF.
