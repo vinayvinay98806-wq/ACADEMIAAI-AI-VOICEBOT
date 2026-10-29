@@ -34,3 +34,8 @@ venv.bak/
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Work 6 frontend generated files
+academiaai-frontend/node_modules/
+academiaai-frontend/dist/
+academiaai-frontend/.env
