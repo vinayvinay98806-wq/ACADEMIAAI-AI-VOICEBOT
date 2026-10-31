@@ -1,0 +1,21 @@
+ .gitignore                                         |  17 [32m++[m
+ AGENTS.md                                          |  28 [32m+++[m
+ README.md                                          |  94 [32m++++++++++[m
+ demo.py                                            | 110 [32m++++++++++++[m
+ ...plete context and reasoning week 1\357\200\242" |  55 [32m++++++[m
+ tests/__init__.py                                  |   1 [32m+[m
+ tests/test_mock_reasoning.py                       | 109 [32m++++++++++++[m
+ tests/test_prompt_versioning.py                    |  66 [32m+++++++[m
+ tests/test_safe_capture_defaults.py                |  44 [32m+++++[m
+ tests/test_schemas.py                              | 112 [32m++++++++++++[m
+ tests/test_validation.py                           | 154 [32m++++++++++++++++[m
+ w3_context_reasoning/__init__.py                   |  51 [32m++++++[m
+ w3_context_reasoning/engine.py                     | 194 [32m+++++++++++++++++++++[m
+ w3_context_reasoning/fixtures.py                   | 152 [32m++++++++++++++++[m
+ w3_context_reasoning/prompts/__init__.py           |   7 [32m+[m
+ w3_context_reasoning/prompts/manager.py            | 144 [32m+++++++++++++++[m
+ w3_context_reasoning/prompts/v1/system_prompt.txt  |   8 [32m+[m
+ w3_context_reasoning/prompts/v1/template.json      |  21 [32m+++[m
+ w3_context_reasoning/schemas.py                    | 187 [32m++++++++++++++++++++[m
+ w3_context_reasoning/validation.py                 | 150 [32m++++++++++++++++[m
+ 20 files changed, 1704 insertions(+)

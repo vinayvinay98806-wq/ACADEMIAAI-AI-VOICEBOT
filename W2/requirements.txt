@@ -1,0 +1,2 @@
+# AcademiaAI AI Voice Co-Pilot - Workstream W2 (STT) Week 1 Dependencies
+pydantic>=2.0.0
