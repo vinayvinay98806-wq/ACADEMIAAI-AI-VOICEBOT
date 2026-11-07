@@ -1,13 +1,13 @@
-"""Ordered Transcript Accumulator.
+"""Ordered Transcript Accumulator with Event Reconciliation.
 
 This module provides `OrderedTranscriptAccumulator`, which manages streaming transcription
-results, enforces chronological ordering, handles interim-to-final transitions, and
-safeguards against out-of-order and duplicate updates.
+results, enforces chronological ordering, handles interim-to-final transitions, suppresses
+duplicate events, and safeguards against out-of-order and duplicate updates across sessions.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from w2_stt.schemas import (
     TranscriptErrorInfo,
@@ -18,22 +18,42 @@ from w2_stt.schemas import (
 
 
 class OrderedTranscriptAccumulator:
-    """Maintains and synchronizes streaming transcript segments.
+    """Maintains, reconciles, and synchronizes streaming transcript segments.
 
     Guarantees:
     1. Chronological Ordering: Segments are always sorted by `start_time`, `end_time`, `segment_id`.
     2. Interim-to-Final Transitions: Interim results are superseded and purged once a final segment
        for the same `segment_id` arrives.
-    3. Idempotency & Duplicate Handling: Duplicate final segments with identical segment IDs do not
-       cause duplicate words in the assembled transcript.
-    4. Out-of-Order Safety: Segments received out of sequence are correctly sorted into position.
-    5. Error Isolation: Error events are recorded without invalidating previously finalized segments.
+    3. Duplicate Event Suppression: Events with previously processed `event_id`s are suppressed idempotently.
+    4. Duplicate Final Segment Safety: Multiple arrivals of final segments with the same segment_id
+       do not duplicate text or corrupt timeline.
+    5. Out-of-Order Safety: Segments received out of chronological sequence are sorted into proper position.
+    6. Error Isolation: Error events are recorded into diagnostic logs without corrupting valid segments.
+    7. Session-Level State Management: Tracks session identifier, processed event counts, and total speech duration.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, session_id: Optional[str] = None) -> None:
+        """Initialize accumulator session.
+
+        Args:
+            session_id: Optional session identifier for tracking this accumulation lifecycle.
+        """
+        self._session_id = session_id
         self._final_segments: Dict[str, TranscriptSegment] = {}
         self._interim_segments: Dict[str, TranscriptSegment] = {}
         self._recorded_errors: List[TranscriptErrorInfo] = []
+        self._seen_event_ids: Set[str] = set()
+        self._duplicate_events_count: int = 0
+        self._total_event_count: int = 0
+
+    @property
+    def session_id(self) -> Optional[str]:
+        """Identifier for the active transcription session."""
+        return self._session_id
+
+    @session_id.setter
+    def session_id(self, value: Optional[str]) -> None:
+        self._session_id = value
 
     @property
     def final_count(self) -> int:
@@ -50,19 +70,53 @@ class OrderedTranscriptAccumulator:
         """List of all error payloads received during ingestion."""
         return list(self._recorded_errors)
 
-    def add_event(self, event: TranscriptEvent) -> None:
-        """Ingest a TranscriptEvent into the accumulator.
+    @property
+    def duplicate_events_count(self) -> int:
+        """Number of duplicate events suppressed by event_id check."""
+        return self._duplicate_events_count
+
+    @property
+    def total_event_count(self) -> int:
+        """Total number of unique events ingested."""
+        return self._total_event_count
+
+    @property
+    def total_duration(self) -> float:
+        """Total finalized speech duration in seconds."""
+        return sum(s.end_time - s.start_time for s in self._final_segments.values())
+
+    def add_event(self, event: TranscriptEvent) -> bool:
+        """Ingest a TranscriptEvent into the accumulator with duplicate suppression.
 
         Args:
             event: The TranscriptEvent containing either a segment or an error.
+
+        Returns:
+            True if event was processed; False if suppressed as a duplicate.
         """
+        # 1. Duplicate event suppression
+        if event.event_id in self._seen_event_ids:
+            self._duplicate_events_count += 1
+            return False
+
+        self._seen_event_ids.add(event.event_id)
+        self._total_event_count += 1
+
+        # 2. Update session_id if accumulator session was unset
+        if self._session_id is None and event.session_id is not None:
+            self._session_id = event.session_id
+
+        # 3. Handle Error Event
         if event.event_type == TranscriptEventType.ERROR:
             if event.error:
                 self._recorded_errors.append(event.error)
-            return
+            return True
 
+        # 4. Handle Interim or Final Segment Event
         if event.segment is not None:
             self.add_segment(event.segment)
+
+        return True
 
     def add_segment(self, segment: TranscriptSegment) -> None:
         """Ingest a TranscriptSegment, resolving interim vs. final status.
@@ -76,7 +130,7 @@ class OrderedTranscriptAccumulator:
             # 1. Purge any interim representation for this segment
             self._interim_segments.pop(seg_id, None)
 
-            # 2. Store or update final segment (idempotent for identical content)
+            # 2. Store final segment (idempotent for identical content)
             self._final_segments[seg_id] = segment
         else:
             # Only track interim if this segment has NOT already been finalized
@@ -125,7 +179,7 @@ class OrderedTranscriptAccumulator:
         """Returns the most recent active interim segment, if any exists."""
         if not self._interim_segments:
             return None
-        # Return the interim segment with highest start_time
+        # Return the interim segment with highest start_time / end_time
         return max(
             self._interim_segments.values(),
             key=lambda s: (s.start_time, s.end_time),
@@ -135,8 +189,15 @@ class OrderedTranscriptAccumulator:
         """Look up a segment by its segment_id (checks finals first, then interims)."""
         return self._final_segments.get(segment_id) or self._interim_segments.get(segment_id)
 
+    def clear_errors(self) -> None:
+        """Clear recorded diagnostic errors without altering segments."""
+        self._recorded_errors.clear()
+
     def reset(self) -> None:
-        """Clear all stored segments and errors."""
+        """Clear all stored segments, errors, and session deduplication states."""
         self._final_segments.clear()
         self._interim_segments.clear()
         self._recorded_errors.clear()
+        self._seen_event_ids.clear()
+        self._duplicate_events_count = 0
+        self._total_event_count = 0
