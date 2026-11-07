@@ -1,7 +1,7 @@
 import React from 'react';
 import type { ScreenShareStatus, PrivacyScope } from '../../types/copilot';
 
-interface PrivacyPanelProps {
+export interface PrivacyPanelProps {
   screenShareStatus: ScreenShareStatus;
   privacyScope: PrivacyScope;
   privacyShieldActive: boolean;
@@ -32,9 +32,9 @@ export const PrivacyPanel: React.FC<PrivacyPanelProps> = ({
         <div className={`privacy-status-indicator status-${screenShareStatus}`} role="status">
           <span className="privacy-dot" aria-hidden="true" />
           <span className="privacy-status-text">
-            {screenShareStatus === 'active' && 'Sharing Active'}
+            {screenShareStatus === 'active' && 'Sharing Active (Mock)'}
             {screenShareStatus === 'paused' && 'Vision Paused'}
-            {screenShareStatus === 'disabled' && 'Screen Private'}
+            {screenShareStatus === 'disabled' && 'Screen Private (OFF)'}
           </span>
         </div>
       </div>
@@ -46,10 +46,10 @@ export const PrivacyPanel: React.FC<PrivacyPanelProps> = ({
             <span className="privacy-item-title">Visual Context Sharing</span>
             <span className="privacy-item-desc">
               {screenShareStatus === 'active'
-                ? 'Co-pilot can read visible lecture slides and code snippets.'
+                ? 'Co-pilot references synthetic lecture slide fixture (Slide 14 OCR).'
                 : screenShareStatus === 'paused'
                 ? 'Screen stream temporarily halted. Co-pilot uses audio only.'
-                : 'Screen stream completely disconnected.'}
+                : 'Screen stream completely disconnected (OFF by default).'}
             </span>
           </div>
 
@@ -65,9 +65,9 @@ export const PrivacyPanel: React.FC<PrivacyPanelProps> = ({
               <line x1="12" y1="17" x2="12" y2="21" />
             </svg>
             <span>
-              {screenShareStatus === 'active' && 'Pause Stream'}
+              {screenShareStatus === 'active' && 'Disable Stream'}
               {screenShareStatus === 'paused' && 'Resume Stream'}
-              {screenShareStatus === 'disabled' && 'Enable Stream'}
+              {screenShareStatus === 'disabled' && 'Enable Stream (Mock)'}
             </span>
           </button>
         </div>
@@ -141,4 +141,3 @@ export const PrivacyPanel: React.FC<PrivacyPanelProps> = ({
     </section>
   );
 };
-

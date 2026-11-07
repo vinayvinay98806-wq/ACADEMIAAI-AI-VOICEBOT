@@ -1,9 +1,11 @@
 import React from 'react';
-import type { ConnectionStatus } from '../../types/copilot';
+import type { ConnectionStatus, VoiceState } from '../../types/copilot';
 
-interface HeaderProps {
+export interface HeaderProps {
   sessionDuration: string;
   connectionStatus: ConnectionStatus;
+  voiceState: VoiceState;
+  screenContextEnabled: boolean;
   toggleConnection: () => void;
   onTriggerTestAlert: () => void;
 }
@@ -11,6 +13,8 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   sessionDuration,
   connectionStatus,
+  voiceState,
+  screenContextEnabled,
   toggleConnection,
   onTriggerTestAlert,
 }) => {
@@ -28,15 +32,37 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="brand-title-row">
             <h1 className="brand-title">AcademiaAI</h1>
             <span className="brand-badge">Voice Co-Pilot</span>
-            <span className="brand-tag">Work 6: Frontend & UX</span>
+            <span className="brand-tag">Work 6: Frontend & UX (Week 2)</span>
           </div>
           <p className="brand-sub">Active Context: CS 685 — Deep Learning & NLP (Prof. Reynolds)</p>
         </div>
       </div>
 
       <div className="header-meta">
+        {/* Quick Capture Status Indicators in Header */}
+        <div className="header-capture-indicators" aria-label="Active capture indicators">
+          <span
+            className={`header-indicator-pill mic-${voiceState === 'listening' ? 'active' : voiceState === 'paused' ? 'paused' : 'idle'}`}
+            title={`Mic capture: ${voiceState}`}
+          >
+            <span className="indicator-dot" aria-hidden="true" />
+            Mic: {voiceState === 'listening' ? 'LIVE' : voiceState === 'paused' ? 'PAUSED' : 'OFF'}
+          </span>
+
+          <span
+            className={`header-indicator-pill screen-${screenContextEnabled ? 'active' : 'disabled'}`}
+            title={`Screen context: ${screenContextEnabled ? 'Active (Mock)' : 'OFF'}`}
+          >
+            <span className="indicator-dot" aria-hidden="true" />
+            Screen: {screenContextEnabled ? 'MOCK ON' : 'OFF'}
+          </span>
+        </div>
+
+        <div className="meta-divider" aria-hidden="true" />
+
+        {/* Session Timer */}
         <div className="meta-item">
-          <span className="meta-label">Session Time</span>
+          <span className="meta-label">Session Duration</span>
           <span className="meta-value timer-mono" aria-label={`Session duration ${sessionDuration}`}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <circle cx="12" cy="12" r="10" />
@@ -48,13 +74,14 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="meta-divider" aria-hidden="true" />
 
+        {/* Network Status Toggle */}
         <div className="meta-item">
           <span className="meta-label">Network Status</span>
           <button
             type="button"
             className={`status-pill pill-${connectionStatus}`}
             onClick={toggleConnection}
-            title="Click to toggle connection state for testing"
+            title="Click to toggle connection state for testing (Connected / Reconnecting / Offline)"
             aria-label={`Connection status: ${connectionStatus}. Click to test state change.`}
           >
             <span className="status-dot" aria-hidden="true" />
@@ -73,7 +100,8 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             className="btn-ghost-sm"
             onClick={onTriggerTestAlert}
-            title="Trigger an accessible mock error alert"
+            title="Trigger an accessible mock error alert with retry option"
+            aria-label="Simulate test alert"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
@@ -87,4 +115,3 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
-

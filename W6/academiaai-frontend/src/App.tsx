@@ -2,7 +2,7 @@ import { useVoiceCopilot } from './hooks/useVoiceCopilot';
 import { Header } from './components/layout/Header';
 import { AlertBanner } from './components/layout/AlertBanner';
 import { VoiceControlPanel } from './components/voice/VoiceControlPanel';
-import { PrivacyPanel } from './components/privacy/PrivacyPanel';
+import { ContextSourcePanel } from './components/context/ContextSourcePanel';
 import { TranscriptPanel } from './components/transcript/TranscriptPanel';
 import { AIResponsePanel } from './components/transcript/AIResponsePanel';
 import { WorkflowTracker } from './components/workflow/WorkflowTracker';
@@ -15,14 +15,18 @@ export function App() {
     voiceState,
     audioLevel,
     startListening,
+    pauseListening,
+    resumeListening,
     stopListening,
     simulateVoicePrompt,
     connectionStatus,
     toggleConnection,
-    screenShareStatus,
-    toggleScreenShare,
-    privacyScope,
-    setPrivacyScope,
+    reconnect,
+    isLoading,
+    microphoneStatus,
+    screenContext,
+    toggleScreenContext,
+    academicSources,
     privacyShieldActive,
     togglePrivacyShield,
     transcripts,
@@ -47,7 +51,11 @@ export function App() {
     addNotification(
       'error',
       'Microphone Buffer Warning',
-      'Audio packet latency exceeded 250ms threshold. Adaptive jitter buffer active.'
+      'Audio packet latency exceeded 250ms threshold. Adaptive jitter buffer active.',
+      () => {
+        addNotification('success', 'Jitter Resolved', 'Audio buffer latency normalized to 20ms.');
+      },
+      'Reset Buffer'
     );
   };
 
@@ -57,6 +65,8 @@ export function App() {
       <Header
         sessionDuration={sessionDuration}
         connectionStatus={connectionStatus}
+        voiceState={voiceState}
+        screenContextEnabled={screenContext.captureEnabled}
         toggleConnection={toggleConnection}
         onTriggerTestAlert={handleTriggerTestAlert}
       />
@@ -66,23 +76,31 @@ export function App() {
 
       {/* Main 3-Column Responsive Dashboard */}
       <main className="dashboard-grid">
-        {/* Left Column: Voice Interaction & Privacy Controls */}
+        {/* Left Column: Voice Interaction & Context Grounding */}
         <div className="column-left">
           <VoiceControlPanel
             voiceState={voiceState}
             audioLevel={audioLevel}
+            connectionStatus={connectionStatus}
+            isLoading={isLoading}
+            microphoneStatus={microphoneStatus}
+            screenContextEnabled={screenContext.captureEnabled}
             onStartListening={startListening}
+            onPauseListening={pauseListening}
+            onResumeListening={resumeListening}
             onStopListening={stopListening}
             onSimulatePrompt={simulateVoicePrompt}
+            onToggleScreenContext={toggleScreenContext}
+            onReconnect={reconnect}
           />
 
-          <PrivacyPanel
-            screenShareStatus={screenShareStatus}
-            privacyScope={privacyScope}
+          <ContextSourcePanel
+            screenContext={screenContext}
+            academicSources={academicSources}
             privacyShieldActive={privacyShieldActive}
-            onToggleScreenShare={toggleScreenShare}
-            onChangeScope={setPrivacyScope}
+            onToggleScreenContext={toggleScreenContext}
             onTogglePrivacyShield={togglePrivacyShield}
+            isLoading={isLoading}
           />
         </div>
 
@@ -91,11 +109,13 @@ export function App() {
           <TranscriptPanel
             transcripts={transcripts}
             onClear={clearTranscripts}
+            isLoading={isLoading}
           />
 
           <AIResponsePanel
             latestAiResponse={latestAiResponse}
             voiceState={voiceState}
+            isLoading={isLoading}
           />
         </div>
 
@@ -125,6 +145,6 @@ export function App() {
       )}
     </div>
   );
-};
+}
 
 export default App;

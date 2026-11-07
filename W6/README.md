@@ -1,88 +1,127 @@
-# Academiaai AI Voice Co-Pilot
+# AcademiaAI AI Voice Co-Pilot
+## Worker 6 (W6): Frontend & UX — Week 2 Implementation
 
-## Worker 1 (W1): Audio Input & Voice Activity Detection (VAD)
+This directory contains the **Week 2** frontend and user experience implementation for **Worker 6 (W6)** of the AcademiaAI AI Voice Co-Pilot project.
 
-This directory contains the Week 1 implementation for **Worker 1 (W1)** of the Academiaai AI Voice Co-Pilot project.
+---
 
-### Week 1 Scope Overview
+### Week 2 Objectives & Capabilities Delivered
 
-- **Days 1–2 (Data Contracts & Schemas):**
-  - `AudioFormat`: Enforces sample-rate validation against standard speech rates (e.g. 16kHz default) and channel validation (mono/stereo).
-  - `AudioChunk`: Atomic payload unit containing raw PCM bytes, format metadata, strictly monotonic `sequence_id`, and exact stream timestamp `timestamp_ms`.
-  - `AudioError` Hierarchy: Structured exceptions (`AudioFormatError`, `AudioChunkError`, `EmptyChunkError`, `CorruptChunkError`).
-- **Days 3–4 (Mock Sources & Chunker):**
-  - `FakeMicrophoneSource`: Synthetic deterministic audio generator supporting sine waves, silence, seeded white noise, and speech-like cadences without hardware/driver dependencies.
-  - `DeterministicChunker`: Stream buffer slicer transforming arbitrary incoming byte buffers into validated, aligned `AudioChunk` packets with continuous timestamps and sequence IDs.
-- **Days 5–6 (CLI Demo & Validation Testing):**
-  - CLI Demo (`academiaai.audio.cli`): Command-line tool to test audio streaming and inspect chunk metadata.
-  - Comprehensive Unit Test Suite covering valid operations as well as invalid, empty, and corrupt chunk scenarios.
-- **Day 7 (PR Readiness & Test Documentation):**
-  - Clean modular architecture, complete documentation, and reproducible test suite.
+1. **Pause and Resume Controls (Days 8–9):**
+   - Active voice session supports seamless **Pause** and **Resume** transitions (`idle` → `listening` → `paused` → `listening` → `idle`).
+   - Pausing halts audio streaming capture while preserving session continuity, transcript history, and active timer state.
+   - Guarded against accidental termination during pause.
+
+2. **Visible Capture State Indicators (Days 8–9):**
+   - **Microphone Capture Indicator:** Displays live capture status (`LIVE`, `PAUSED`, `STANDBY`), hardware format (PCM 16kHz Mono), and real-time audio input level percentage.
+   - **Screen-Context Capture Indicator:** Clearly indicates visual context status (`OFF (DEFAULT)` vs `ACTIVE (MOCK)`), with a direct toggle action.
+
+3. **Loading, Offline, and Error States (Days 8–9):**
+   - **Loading State:** Dedicated synthesis spinner, skeleton placeholder, and accessible `aria-busy` feedback.
+   - **Offline Resilience:** Header and panel-level offline banners with one-click **Reconnect** action that restores WebSocket streaming without losing session state.
+   - **Error Handling:** Structured error notifications with retry actions.
+
+4. **Live Transcript Segments with Interim & Final Revisions (Days 10–11):**
+   - Implements speech-to-text contract aligned with W2 `TranscriptSegment` schema.
+   - Distinguishes **Interim** provisional segments (pulsing indicator, dashed boundary, italicized hypothesis) from **Final** confirmed segments (solid boundary, high contrast, confirmed tag).
+   - **In-Place Segment Revisions:** When a revised or final transcript arrives with a matching stable `id`, the corresponding segment updates in-place with a revision counter (`rev 2`), strictly eliminating duplicate segments.
+   - **Confidence Score Formatting:** Dynamic color-coded pill (`High: >=90%`, `Medium: 75–89%`, `Low: <75%`).
+   - Diarized speaker labels and stream inception timestamps (`+0.0s`).
+
+5. **Context and Source Grounding Panel (Days 12–13):**
+   - **Screen Context strictly OFF by default:** Guarantees zero unconfirmed visual capture or privacy leakage.
+   - Explicit **ON/OFF** user control with clear permission indicator.
+   - **Synthetic Demo Fixtures:** Transparently marks mock visual frames (`frame-fixture-014`, Lecture 7 Slide 14 OCR) to prevent false claims of live desktop recording.
+   - **Grounded Academic Sources:** Ingests W3 `SourceReference` contracts (e.g. Vaswani et al. 2017 Attention paper, Course Syllabus Module 4, Lecture Slides) with relevance match percentages.
+   - **Academic Privacy Shield:** Client-side sanitization masking confidential student IDs, grades, and credential tokens.
+
+6. **Automated UI Testing & Demonstration (Day 14):**
+   - Comprehensive Vitest + React Testing Library test suite (`27 tests across 5 test suites`).
+   - Mock-backend demonstration script (`scripts/demo_week2.js`).
 
 ---
 
 ### Project Structure
 
 ```text
-ACADEMIAAI-AI-VOICEBOT/
-├── pyproject.toml
+W6/
+├── academiaai-frontend/
+│   ├── public/
+│   ├── scripts/
+│   │   └── demo_week2.js                 # Terminal mock-backend demonstration
+│   ├── src/
+│   │   ├── __tests__/                     # Vitest + RTL UI test suite
+│   │   │   ├── ContextSourcePanel.test.tsx
+│   │   │   ├── HeaderAndAlerts.test.tsx
+│   │   │   ├── TranscriptPanel.test.tsx
+│   │   │   ├── VoiceControlPanel.test.tsx
+│   │   │   └── useVoiceCopilot.test.ts
+│   │   ├── api/
+│   │   │   └── copilotApi.ts             # Typed API client with W5/W2/W3 mock contracts
+│   │   ├── components/
+│   │   │   ├── approval/                 # HITL sensitive action approval modals
+│   │   │   ├── context/                  # Week 2 Context & Grounded Source Panel
+│   │   │   │   └── ContextSourcePanel.tsx
+│   │   │   ├── layout/                   # Header bar, Alert banner stack
+│   │   │   ├── privacy/                  # Scope selector & privacy shield
+│   │   │   ├── transcript/               # Live transcripts & AI synthesis cards
+│   │   │   ├── voice/                    # Voice controls & animated audio waveform
+│   │   │   └── workflow/                 # Agentic workflow step tracker
+│   │   ├── hooks/
+│   │   │   └── useVoiceCopilot.ts        # Central copilot state management hook
+│   │   ├── mock/
+│   │   │   └── mockData.ts               # Grounded academic fixtures & contracts
+│   │   ├── styles/
+│   │   │   └── dashboard.css             # Dark-mode dashboard theme & animations
+│   │   ├── test/
+│   │   │   └── setup.ts                  # Jest-DOM matchers setup for Vitest
+│   │   ├── types/
+│   │   │   └── copilot.ts                # TypeScript schemas for frontend
+│   │   ├── App.tsx
+│   │   └── main.tsx
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── vite.config.ts
 ├── README.md
-├── PULL_REQUEST.md
-├── .gitignore
-├── src/
-│   └── academiaai/
-│       ├── __init__.py
-│       └── audio/
-│           ├── __init__.py
-│           ├── schemas.py      # AudioFormat, AudioChunk, AudioError hierarchy
-│           ├── sources.py      # DeterministicChunker, FakeMicrophoneSource, SignalType
-│           └── cli.py          # Interactive CLI demo & validation runner
-└── tests/
-    ├── __init__.py
-    └── test_audio/
-        ├── __init__.py
-        ├── test_schemas.py     # Schema and parameter validation tests
-        ├── test_sources.py     # Deterministic chunking & source tests
-        └── test_edge_cases.py  # Invalid, empty, and corrupt chunk tests
+└── PULL_REQUEST.md
 ```
 
 ---
 
-### Quick Start
+### Getting Started & Verification Commands
 
-#### 1. Running Unit Tests
-
-Execute the full deterministic test suite with Python's built-in `unittest`:
+All commands are run from the `academiaai-frontend` directory:
 
 ```powershell
-$env:PYTHONPATH="src"
-python -m unittest discover -s tests -v
+cd academiaai-frontend
 ```
 
-#### 2. Running the CLI Demo
-
-Generate 10 chunks of synthetic speech-like audio at 16kHz mono:
-
+#### 1. Running Unit & UI Tests
+Execute the complete automated test suite (all 27 tests):
 ```powershell
-$env:PYTHONPATH="src"
-python -m academiaai.audio.cli --signal speech_like --chunks 10 --verbose
+npm test
 ```
 
-Demonstrate error handling for invalid formats, corrupt chunks, and empty payloads:
-
+#### 2. Running the Mock Backend Demonstration
+Run the end-to-end simulated demonstration script showcasing all Week 2 behaviors:
 ```powershell
-$env:PYTHONPATH="src"
-python -m academiaai.audio.cli --test-invalid
+npm run demo
 ```
 
-Available CLI arguments:
-- `--signal`: Synthetic signal (`sine_wave`, `silence`, `white_noise`, `speech_like`)
-- `--chunks`: Number of chunks to produce (default: 15)
-- `--chunk-duration-ms`: Duration per chunk in ms (default: 20.0)
-- `--sample-rate`: Sample rate in Hz (default: 16000)
-- `--channels`: Channels (default: 1)
-- `--frequency`: Tone frequency in Hz (default: 440.0)
-- `--amplitude`: Amplitude scale 0.0 to 1.0 (default: 0.5)
-- `--seed`: Seed for reproducible white noise (default: 42)
-- `--verbose`: Detailed output for all chunks
-- `--test-invalid`: Explicit demonstration of error handling
+#### 3. Building for Production
+Verify compilation and bundle generation:
+```powershell
+npm run build
+```
+
+#### 4. Running Code Linter
+Verify code style and rules of hooks:
+```powershell
+npm run lint
+```
+
+#### 5. Starting the Local Development Server
+Launch the interactive web application in mock mode:
+```powershell
+npm run dev
+```

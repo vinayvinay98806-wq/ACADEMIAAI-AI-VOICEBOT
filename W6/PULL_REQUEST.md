@@ -1,196 +1,208 @@
-# Pull Request: [W1-Week1] Audio Input Contracts, Deterministic Chunker & Mock Sources
+# Pull Request: [W6-Week2] Voice Session Pause/Resume, Live Interim Transcripts, Grounded Context Panel & Capture Indicators
 
 ## Summary
 
-This PR delivers **Week 1** of the Worker 1 (W1) assignment for the **Academiaai AI Voice Co-Pilot** pipeline, establishing robust, deterministic audio data contracts, a fake microphone source, a streaming chunker, and comprehensive unit tests with a CLI demonstration.
+This pull request completes **Week 2 (Days 8–14)** for **Worker 6 (W6) — Frontend & UX** of the **AcademiaAI AI Voice Co-Pilot** application. It extends the existing Week 1 dashboard to provide complete session lifecycle control (Start, Pause, Resume, Stop), real-time capture indicators, live streaming transcript segments with in-place interim-to-final revisions, an explicit opt-in Context & Grounded Source panel (strictly OFF by default), network offline resilience, and a comprehensive automated test suite.
 
-All implementation is strictly contained within `src/academiaai/audio/` and its unit tests under `tests/test_audio/`. No external dependencies or real microphone drivers are introduced.
+All Week 1 functionality and design language have been strictly preserved. Mock mode remains the default, fully aligned with the backend contracts of W5 (Sessions), W2 (STT), and W3 (Context & Reasoning).
 
 ---
 
 ## Deliverables by Assignment Days
 
-### 1. Days 1–2: Audio Schemas & Validation (`src/academiaai/audio/schemas.py`)
-- **`AudioFormat`**:
-  - Sample rate validation supporting standard speech rates (`8000`, `11025`, `12000`, `16000`, `22050`, `24000`, `32000`, `44100`, `48000` Hz).
-  - Channel validation (`1` for Mono, `2` for Stereo).
-  - Sample width validation (`1`, `2`, `4` bytes per sample).
-  - Accurate frame and duration calculation utilities (`bytes_per_frame`, `bytes_per_second`, `calculate_duration_ms`, `calculate_byte_count`).
-- **`AudioChunk`**:
-  - Immutable raw PCM data carrier.
-  - Strict sequence tracking: non-negative `sequence_id` with monotonic validation.
-  - Timestamp tracking: non-negative stream offset in milliseconds `timestamp_ms`.
-  - Frame alignment enforcement: validates that `len(data)` is an exact multiple of `bytes_per_frame`.
-- **Exception Hierarchy**:
-  - Base `AudioError` -> `AudioFormatError`, `AudioChunkError`.
-  - Subclasses: `EmptyChunkError` and `CorruptChunkError`.
+### 1. Days 8–9: Pause / Resume & Capture States
+- **Session Control Lifecycle:**
+  - Implemented `Pause` button during active voice sessions.
+  - Implemented `Resume` button when session is paused.
+  - Enforced correct state transitions: `idle` → `listening` → `paused` → `listening` → `idle`.
+  - Pausing halts audio streaming input without terminating the session or resetting the transcript history.
+- **Visible Capture Indicators:**
+  - **Microphone Capture Badge:** Real-time state pill (`LIVE`, `PAUSED`, `STANDBY`) with audio level meter percentage and active pulse ring.
+  - **Screen-Context Capture Badge:** Clear visibility of visual context state (`OFF (DEFAULT)` vs `ACTIVE (MOCK)`).
+  - **Header Capture Indicators:** Persistent top-bar status badges for microphone and screen context.
+- **Resilience States:**
+  - **Loading State:** Dedicated synthesis indicator, loading skeleton in transcript stream, and `aria-busy` feedback.
+  - **Offline State:** Header indicator, offline warning banner in control panel, and one-click `Reconnect` action.
+  - **Error State:** Structured error notifications with explicit retry actions.
 
-### 2. Days 3–4: Mock Audio Source & Chunker (`src/academiaai/audio/sources.py`)
-- **`DeterministicChunker`**:
-  - Slices incoming continuous or fragmented byte streams into fixed-duration `AudioChunk` packets.
-  - Automatically manages continuous monotonic `sequence_id` (starting at 0) and cumulative `timestamp_ms`.
-  - Supports stream buffering, packet ingestion, and frame-aligned remainder flushing.
-- **`FakeMicrophoneSource`**:
-  - Synthetic, deterministic audio generator without physical hardware dependencies.
-  - Supported signal modes:
-    - `SINE_WAVE`: Pure tone at configurable frequency (e.g., 440 Hz).
-    - `SILENCE`: Zeroed PCM stream.
-    - `WHITE_NOISE`: Deterministic pseudo-random noise with fixed seed reproducibility.
-    - `SPEECH_LIKE`: Modulated voiced bursts and silence pauses to emulate speech rhythm.
-  - Produces valid, aligned `AudioChunk` instances ready for downstream VAD/STT consumers.
+### 2. Days 10–11: Live Transcript Segments with In-Place Revisions
+- **W2 STT Alignment:** Implemented data contracts aligned with W2 `TranscriptSegment` and `TranscriptEvent` schemas (`segment_id`, `start_time`, `end_time`, `confidence`, `is_final`, `language`, `speaker_id`).
+- **Visual Distinctions:**
+  - **Interim Segments:** Dashed purple border, subtle pulsing background, italicized hypothesis text, and "Interim" badge.
+  - **Final Segments:** Solid border, high-contrast text, confirmed checkmark, and "Final" tag.
+- **In-Place Segment Revisions:** When revised or finalized text arrives with a matching stable `id`, the segment updates in-place with a revision count tag (`rev 2`), strictly preventing duplicate bubbles.
+- **Confidence Scoring:** Color-coded confidence pill with score thresholds (`High: >=90%`, `Medium: 75–89%`, `Low: <75%`).
+- **Diarization & Timestamps:** Displays speaker tags (`Student / You`, `AcademiaAI Co-Pilot`) and stream offsets (`+0.0s`).
 
-### 3. Days 5–6: CLI Demo & Unit Tests
-- **CLI Demo (`src/academiaai/audio/cli.py`)**:
-  - Command-line tool showcasing streaming chunk generation with summary statistics.
-  - Includes `--test-invalid` flag demonstrating structured handling of invalid sample rates, invalid channels, empty chunks, corrupt unaligned payloads, negative sequence IDs, and duration discrepancies.
-- **Unit Test Suite**:
-  - `tests/test_audio/test_schemas.py`: Verifies format configurations, invalid rates, channels, widths, and duration calculations.
-  - `tests/test_audio/test_sources.py`: Verifies chunker buffering, streaming, reset behavior, and deterministic reproducibility across all signal types.
-  - `tests/test_audio/test_edge_cases.py`: Rigorous coverage of empty, non-bytes, corrupt/unaligned, and inconsistent chunks.
+### 3. Days 12–13: Context and Source Panel
+- **Safe Defaults:** Screen context is **strictly OFF by default** upon initialization; automatic screen capture is prohibited.
+- **Explicit ON/OFF Toggle:** Clear toggle switch with immediate visual feedback and permission status.
+- **Synthetic Demonstration Fixtures:** Clearly labels demo frames as `DEMO FIXTURE` (`frame-fixture-014`, Lecture 7 Slide 14 OCR) to ensure no fake claims of actual desktop recording are made.
+- **Grounded Academic Sources:** Displays academic references grounded in W3 `SourceReference` contracts:
+  - *Vaswani et al. (2017) "Attention Is All You Need"* (99% match, Textbook)
+  - *CS 685 Course Syllabus — Module 4* (95% match, Syllabus)
+  - *Lecture 7 Slide 14: Multi-Head Scaled Dot-Product Attention* (98% match, Slide)
+- **Academic Privacy Shield:** Client-side PII sanitization redacting student IDs, emails, and grade entries.
 
-### 4. Day 7: PR Preparation & Test Verification
-- All 28 tests pass deterministically.
-- Actual test execution log included below.
+### 4. Day 14: Testing & Demonstration
+- **Automated Test Suite:** Implemented 27 automated unit and integration tests across 5 test suites using Vitest and React Testing Library.
+- **Mock-Backend Demonstration:** Interactive CLI demonstration script (`scripts/demo_week2.js`).
+- **Accessibility:** Keyboard navigation, visible focus rings, ARIA roles (`role="status"`, `role="log"`, `aria-live="polite"`), and screen reader attributes.
 
 ---
 
-## Actual Test Execution Output
+## Files Modified and Created
 
+### Files Created:
+- `academiaai-frontend/src/api/copilotApi.ts` — Typed API client implementing W5, W2, and W3 contracts in mock mode.
+- `academiaai-frontend/src/components/context/ContextSourcePanel.tsx` — Opt-in context and grounded source panel.
+- `academiaai-frontend/src/test/setup.ts` — Vitest environment configuration with jest-dom matchers.
+- `academiaai-frontend/src/__tests__/VoiceControlPanel.test.tsx` — Tests for start, pause, resume, stop, and capture indicators.
+- `academiaai-frontend/src/__tests__/TranscriptPanel.test.tsx` — Tests for interim/final segments, in-place revisions, confidence scores, and empty state.
+- `academiaai-frontend/src/__tests__/ContextSourcePanel.test.tsx` — Tests for safe defaults (OFF by default), explicit toggle, and academic sources.
+- `academiaai-frontend/src/__tests__/useVoiceCopilot.test.ts` — Tests for state machine transitions, in-place segment updates, and offline reconnect.
+- `academiaai-frontend/src/__tests__/HeaderAndAlerts.test.tsx` — Tests for top header status, alerts, and retry callbacks.
+- `academiaai-frontend/scripts/demo_week2.js` — End-to-end simulated demonstration script.
+
+### Files Modified:
+- `academiaai-frontend/src/types/copilot.ts` — Extended schema types with `paused` voice state, `TranscriptItem` revisions, `ScreenContextData`, `AcademicSourceReference`, and `MicrophoneCaptureStatus`.
+- `academiaai-frontend/src/mock/mockData.ts` — Added initial grounded academic sources, default OFF screen context, and sample voice prompts.
+- `academiaai-frontend/src/hooks/useVoiceCopilot.ts` — Integrated pause/resume controls, in-place segment revisions, offline reconnect, and screen context toggling.
+- `academiaai-frontend/src/components/voice/VoiceControlPanel.tsx` — Added Pause/Resume buttons, mic capture status badge, screen context status badge, and offline alert.
+- `academiaai-frontend/src/components/voice/AudioWaveform.tsx` — Added visual treatment for paused and error states.
+- `academiaai-frontend/src/components/transcript/TranscriptPanel.tsx` — Added interim vs final segment styling, revision tags, and confidence pills.
+- `academiaai-frontend/src/components/transcript/AIResponsePanel.tsx` — Updated grounding references and loading states.
+- `academiaai-frontend/src/components/privacy/PrivacyPanel.tsx` — Aligned default screen share status to disabled (OFF by default).
+- `academiaai-frontend/src/components/layout/Header.tsx` — Added header capture status badges.
+- `academiaai-frontend/src/components/layout/AlertBanner.tsx` — Added retry action buttons for retryable errors.
+- `academiaai-frontend/src/App.tsx` — Connected ContextSourcePanel, pause/resume handlers, and capture states.
+- `academiaai-frontend/src/styles/dashboard.css` — Modern styles for pause/resume buttons, interim segments, capture badges, and context panel.
+- `academiaai-frontend/package.json` — Added `test`, `test:watch`, and `demo` npm scripts.
+- `academiaai-frontend/vite.config.ts` — Configured Vitest test runner.
+- `academiaai-frontend/tsconfig.app.json` — Configured testing library type support.
+- `README.md` — Updated with Week 2 documentation and architecture.
+
+---
+
+## Test Results
+
+### 1. Unit & UI Tests (`npm test`):
 ```text
-$env:PYTHONPATH="src"; python -m unittest discover -s tests -v
+ ✓ src/__tests__/ContextSourcePanel.test.tsx (4 tests)
+ ✓ src/__tests__/useVoiceCopilot.test.ts (6 tests)
+ ✓ src/__tests__/HeaderAndAlerts.test.tsx (3 tests)
+ ✓ src/__tests__/TranscriptPanel.test.tsx (6 tests)
+ ✓ src/__tests__/VoiceControlPanel.test.tsx (8 tests)
 
-test_chunker_flush_corrupt_remainder (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_chunker_flush_corrupt_remainder)
-Verify that flushing an unaligned remainder from chunker raises CorruptChunkError. ... ok
-test_corrupt_chunk_unaligned_mono (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_corrupt_chunk_unaligned_mono)
-Verify that odd/unaligned byte counts raise CorruptChunkError in mono 16-bit. ... ok
-test_corrupt_chunk_unaligned_stereo (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_corrupt_chunk_unaligned_stereo)
-Verify that byte counts not divisible by 4 raise CorruptChunkError in stereo 16-bit. ... ok
-test_empty_chunk_rejection (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_empty_chunk_rejection)
-Verify that an empty byte payload raises EmptyChunkError. ... ok
-test_exception_hierarchy (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_exception_hierarchy)
-Verify that all audio exceptions correctly inherit from AudioError. ... ok
-test_inconsistent_duration_rejection (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_inconsistent_duration_rejection)
-Verify that explicit duration_ms conflicting with payload raises CorruptChunkError. ... ok
-test_negative_sequence_id_rejection (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_negative_sequence_id_rejection)
-Verify that negative or non-integer sequence IDs raise AudioChunkError. ... ok
-test_negative_timestamp_rejection (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_negative_timestamp_rejection)
-Verify that negative or non-numeric timestamps raise AudioChunkError. ... ok
-test_non_bytes_payload_rejection (test_audio.test_edge_cases.TestAudioChunkIntegrityAndErrors.test_non_bytes_payload_rejection)
-Verify that non-bytes/non-bytearray objects raise AudioChunkError. ... ok
-test_bytearray_input_conversion (test_audio.test_schemas.TestAudioChunkSchema.test_bytearray_input_conversion)
-Test that bytearray input is accepted and converted to bytes. ... ok
-test_valid_audio_chunk (test_audio.test_schemas.TestAudioChunkSchema.test_valid_audio_chunk)
-Test valid AudioChunk instantiation and derived properties. ... ok
-test_channel_validation (test_audio.test_schemas.TestAudioFormat.test_channel_validation)
-Test mono and stereo channel acceptance and rejection of invalid channel counts. ... ok
-test_default_format_creation (test_audio.test_schemas.TestAudioFormat.test_default_format_creation)
-Test default AudioFormat values (16kHz, mono, 16-bit PCM). ... ok
-test_duration_and_byte_calculations (test_audio.test_schemas.TestAudioFormat.test_duration_and_byte_calculations)
-Test bidirectional duration <-> byte count conversions. ... ok
-test_encoding_validation (test_audio.test_schemas.TestAudioFormat.test_encoding_validation)
-Test encoding string validation. ... ok
-test_invalid_sample_rates (test_audio.test_schemas.TestAudioFormat.test_invalid_sample_rates)
-Test that non-standard, negative, zero, and non-integer sample rates raise AudioFormatError. ... ok
-test_sample_width_validation (test_audio.test_schemas.TestAudioFormat.test_sample_width_validation)
-Test supported sample widths and rejection of invalid widths. ... ok
-test_supported_sample_rates (test_audio.test_schemas.TestAudioFormat.test_supported_sample_rates)
-Test that all defined standard sample rates are accepted. ... ok
-test_chunk_stream (test_audio.test_sources.TestDeterministicChunker.test_chunk_stream)
-Test processing stream generator via chunk_stream. ... ok
-test_chunker_initial_state (test_audio.test_sources.TestDeterministicChunker.test_chunker_initial_state)
-Verify initial state of chunker. ... ok
-test_chunking_exact_multiple (test_audio.test_sources.TestDeterministicChunker.test_chunking_exact_multiple)
-Test feeding exact multiple of chunk size (2 chunks = 1280 bytes). ... ok
-test_chunking_with_arbitrary_packet_sizes (test_audio.test_sources.TestDeterministicChunker.test_chunking_with_arbitrary_packet_sizes)
-Test feeding irregular packet sizes (e.g. network/ring-buffer fragments). ... ok
-test_reset (test_audio.test_sources.TestDeterministicChunker.test_reset)
-Test that reset clears buffer and sequence counter. ... ok
-test_silence_signal (test_audio.test_sources.TestFakeMicrophoneSource.test_silence_signal)
-Test generating silence produces zeroed byte chunks. ... ok
-test_sine_wave_determinism (test_audio.test_sources.TestFakeMicrophoneSource.test_sine_wave_determinism)
-Test sine wave generation produces non-zero, mathematically deterministic samples. ... ok
-test_speech_like_pattern (test_audio.test_sources.TestFakeMicrophoneSource.test_speech_like_pattern)
-Test speech-like pattern produces chunks with voiced and unvoiced intervals. ... ok
-test_total_duration_limit (test_audio.test_sources.TestFakeMicrophoneSource.test_total_duration_limit)
-Test total_duration_ms stopping condition. ... ok
-test_white_noise_reproducibility (test_audio.test_sources.TestFakeMicrophoneSource.test_white_noise_reproducibility)
-Test that identical seeds generate bit-for-bit identical white noise. ... ok
+ Test Files  5 passed (5)
+      Tests  27 passed (27)
+   Duration  7.30s
+```
 
-----------------------------------------------------------------------
-Ran 28 tests in 0.024s
+### 2. Linter Check (`npm run lint`):
+```text
+> academiaai-frontend@0.0.0 lint
+> oxlint
 
-OK
+Found 0 warnings and 0 errors.
+Finished in 94ms on 24 files with 116 rules using 12 threads.
+```
+
+### 3. Production Build (`npm run build`):
+```text
+> academiaai-frontend@0.0.0 build
+> tsc -b && vite build
+
+vite v8.3.5 building client environment for production...
+transforming...
+✓ 30 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.50 kB │ gzip:  0.33 kB
+dist/assets/index-fL0n_3ti.css   42.33 kB │ gzip:  7.85 kB
+dist/assets/index-B1uacie-.js   282.97 kB │ gzip: 84.80 kB
+✓ built in 375ms
+```
+
+### 4. End-to-End Mock Backend Demonstration (`npm run demo`):
+```text
+================================================================
+  ACADEMIAAI AI VOICE CO-PILOT — WEEK 2 FRONTEND & UX DEMO
+================================================================
+
+[STEP 1: INITIAL STATE & SAFE DEFAULTS]
+  • Session State:       IDLE
+  • Network Gateway:     CONNECTED (22ms, Mock API Mode)
+  • Mic Capture State:   STANDBY (Zero audio captured)
+  • Screen Context:      OFF BY DEFAULT (Privacy Rule: Zero visual frames ingested)
+  • Privacy Shield:      ACTIVE (Student PII redaction filter ready)
+
+[STEP 2: START VOICE SESSION]
+  -> Triggering: startListening()
+  • Voice State:         LISTENING
+  • Mic Capture Badge:   LIVE CAPTURE: ON (Format: PCM 16kHz Mono)
+  • Audio Level Meter:   68% [||||||||||||||......]
+
+[STEP 3: PAUSE VOICE SESSION]
+  -> User clicks [Pause]
+  • Voice State:         PAUSED
+  • Mic Capture Badge:   CAPTURE SUSPENDED (PAUSED)
+  • Audio Level Meter:   0% (Hardware input muted)
+  • Session Continuity:  PRESERVED (Session not terminated, timer and log intact)
+
+[STEP 4: RESUME VOICE SESSION]
+  -> User clicks [Resume]
+  • Voice State:         LISTENING
+  • Mic Capture Badge:   LIVE CAPTURE: ON
+  • Audio Level Meter:   74% [||||||||||||||||....]
+
+[STEP 5: LIVE TRANSCRIPT STREAM WITH IN-PLACE REVISIONS]
+  -> Simulating utterance for stable segment: 'seg-w2-stt-001'
+  [INTERIM rev 1] [conf: 76%] Speaker: Student (You)
+    "What is the"
+  [INTERIM rev 2] [conf: 88%] Speaker: Student (You) (in-place revision)
+    "What is the computational complexity of"
+  [FINAL   rev 3] [conf: 99%] Speaker: Student (You) (finalized, 0 duplicates)
+    "What is the computational complexity of self-attention with respect to sequence length?"
+
+[STEP 6: CONTEXT & SOURCE PANEL DEMONSTRATION]
+  -> Initial state check:
+     • Screen Context:   OFF (Co-pilot operating in audio-only mode)
+  -> User explicitly clicks: [Enable Screen Context (Mock)]
+     • Screen Context:   ACTIVE (MOCK SYNTHETIC FIXTURE)
+     • Permission:       Granted (Mock Sandbox)
+     • Synthetic Frame:  frame-fixture-014
+     • Active Window:    CS685_Lecture07_Transformers.pdf
+     • Grounded Sources: 3 academic citations loaded
+
+[STEP 7: CO-PILOT SYNTHESIS & REASONING]
+  • Voice State:         PROCESSING -> RESPONDING
+  [AI RESPONSE] Speaker: AcademiaAI Co-Pilot [conf: 99%]
+
+[STEP 8: OFFLINE & ERROR RESILIENCE]
+  -> Simulating Network Disconnection -> Reconnection -> Latency Restored
+
+[STEP 9: CLEAN SHUTDOWN]
+  -> Triggering: stopListening()
+  • Voice State:         IDLE (Session gracefully stopped)
+
+DEMONSTRATION COMPLETE: All Week 2 capabilities verified against mock backend.
 ```
 
 ---
 
-## Actual CLI Demo Output
+## Acceptance Criteria Checklist
 
-```text
-$env:PYTHONPATH="src"; python -m academiaai.audio.cli --signal sine_wave --chunks 5 --test-invalid
-
-======================================================================
-Academiaai AI Voice Co-Pilot - Worker 1: Audio Input & Chunker (Week 1)
-======================================================================
-Audio Format  : 16000 Hz, 1 channel(s), pcm_s16le
-Chunk Duration: 20.0 ms (640 bytes/chunk)
-Signal Type   : sine_wave (freq: 440.0 Hz, amp: 0.50)
-Target Chunks : 5
-----------------------------------------------------------------------
- Seq |    Timestamp |   Duration |   Bytes |  Frames | Preview (Hex)
-----------------------------------------------------------------------
-   0 |       0.00ms |    20.00ms |   640 B |     320 | 0000010bae15b51f...
-   1 |      20.00ms |    20.00ms |   640 B |     320 | 22c371c76ecdeed4...
-   2 |      40.00ms |    20.00ms |   640 B |     320 | 62da0bd212cbacc5...
-   3 |      60.00ms |    20.00ms |   640 B |     320 | 9e25281cdb110607...
-   4 |      80.00ms |    20.00ms |   640 B |     320 | de3c5c3ff73fab3e...
-----------------------------------------------------------------------
-SUMMARY:
-  Total Chunks Generated : 5
-  Sequence IDs Validated : 0 .. 4 (strictly monotonic)
-  Total Audio Time       : 100.00 ms
-  Total Audio Bytes      : 3200 bytes
-  Integrity Check        : ALL CHUNKS PASSED FRAME ALIGNMENT AND VALIDATION
-======================================================================
-
-======================================================================
-DEMO: Audio Validation & Error Handling (Invalid / Empty / Corrupt)
-======================================================================
-
-[Case 1] Attempting to construct AudioFormat with invalid sample rate (12345 Hz)...
-  --> Caught expected AudioFormatError: Unsupported sample rate: 12345 Hz. Supported standard rates are: [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000]
-
-[Case 2] Attempting to construct AudioFormat with invalid channel count (5 channels)...
-  --> Caught expected AudioFormatError: Invalid channel count: 5. Supported channels: [1, 2] (1=mono, 2=stereo)
-
-[Case 3] Attempting to create AudioChunk with empty byte payload (b'')...
-  --> Caught expected EmptyChunkError: AudioChunk data is empty (0 bytes)
-
-[Case 4] Attempting to create AudioChunk with unaligned corrupt byte payload (3 bytes for 16-bit mono)...
-  --> Caught expected CorruptChunkError: Corrupt chunk: data length (3 bytes) is not aligned to frame size (2 bytes = 2 bytes/sample * 1 channels). Remainder: 1 byte(s)
-
-[Case 5] Attempting to create AudioChunk with negative sequence ID (-1)...
-  --> Caught expected AudioChunkError: sequence_id must be non-negative (>= 0), got -1
-
-[Case 6] Attempting to create AudioChunk with mismatched duration (claimed 100ms, actual 20ms)...
-  --> Caught expected CorruptChunkError: Chunk duration_ms (100.00 ms) is inconsistent with payload length (640 bytes = 20.00 ms)
-
-----------------------------------------------------------------------
-All error cases successfully caught and verified against schemas.
-----------------------------------------------------------------------
-```
-
----
-
-## Scope Compliance Checklist
-
-- [x] Implemented W1 Week 1 scope only (Days 1–7).
-- [x] Defined `AudioChunk`, `AudioFormat`, and `AudioError` schemas with sample-rate and channel validation.
-- [x] Implemented `FakeMicrophoneSource` and `DeterministicChunker` with timestamps and sequence IDs.
-- [x] Implemented CLI demo and unit tests covering invalid, empty, and corrupt chunks.
-- [x] Prepared work for PR review and documented actual test output.
-- [x] All implementation isolated inside W1 module (`src/academiaai/audio/`) and its tests (`tests/test_audio/`).
-- [x] Zero real microphone hardware or third-party paid API dependencies used.
-- [x] Week 2+ scope excluded (no real device enumeration, no OS permissions, no VAD energy/silence classifier logic).
-- [x] No modifications to other workers' modules or Git configuration.
-- [x] No automatic git commit or push performed.
+- [x] **Pause & Resume Controls:** Fully implemented and tested. Pausing does not accidentally terminate session.
+- [x] **Capture Indicators:** Both Microphone and Screen Context indicators reflect current live state.
+- [x] **Loading, Offline & Error States:** Clear visual representation, reconnect button, and retry callbacks.
+- [x] **Interim & Final Transcript Segments:** Distinct visual treatments for provisional vs confirmed text.
+- [x] **In-Place Segment Revisions:** Matching `id` segments update in-place without duplication.
+- [x] **Confidence Display:** Formatted percentage pills with emerald/amber/rose color indicators.
+- [x] **Context/Source Panel:** Explicit ON/OFF switch, permission status, and grounded source catalog.
+- [x] **Safe Defaults:** Screen context is **strictly OFF by default**.
+- [x] **Accessibility:** ARIA attributes, keyboard navigation, and visible focus rings.
+- [x] **UI Tests:** 27/27 tests pass.
+- [x] **Build:** Successfully builds without warnings or errors.
+- [x] **Mock Demonstration:** End-to-end mock backend demonstration executes cleanly.
+- [x] **Branch Safety:** Committed to feature branch `feat/w6-week2-frontend` based on `team/sde-7-voicebot`.

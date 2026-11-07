@@ -3,28 +3,100 @@ import type {
   Workflow,
   SensitiveAction,
   SystemNotification,
+  ScreenContextData,
+  AcademicSourceReference,
 } from '../types/copilot';
 
 export const INITIAL_TRANSCRIPTS: TranscriptItem[] = [
   {
     id: 'tx-1',
     speaker: 'system',
+    speakerId: 'System Gateway',
     text: 'AcademiaAI Voice Co-Pilot connected. Session initialized with Academic Context: CS 685 (Deep Learning & NLP).',
     timestamp: '15:20:00',
+    startTime: 0.0,
+    endTime: 1.5,
+    isFinal: true,
+    confidence: 1.0,
+    language: 'en-US',
   },
   {
     id: 'tx-2',
     speaker: 'user',
+    speakerId: 'Student (You)',
     text: 'Can you summarize slide 14 on Multi-Head Self-Attention and highlight how query, key, and value vectors interact?',
     timestamp: '15:21:12',
+    startTime: 72.0,
+    endTime: 76.8,
+    isFinal: true,
     confidence: 0.98,
+    language: 'en-US',
   },
   {
     id: 'tx-3',
     speaker: 'ai',
+    speakerId: 'AcademiaAI Co-Pilot',
     text: 'In slide 14, Multi-Head Self-Attention computes attention weights by scaling the dot product of Query (Q) and Key (K) vectors by 1/sqrt(d_k), then applying Softmax before taking a weighted sum of Value (V) vectors. Running this across multiple heads allows the model to jointly attend to information from different representation subspaces.',
     timestamp: '15:21:16',
+    startTime: 77.2,
+    endTime: 84.5,
+    isFinal: true,
     confidence: 0.96,
+    language: 'en-US',
+  },
+];
+
+/**
+ * Screen Context default state.
+ * CRITICAL RULE: captureEnabled is strictly FALSE by default.
+ */
+export const INITIAL_SCREEN_CONTEXT: ScreenContextData = {
+  captureEnabled: false,
+  permission: 'not-requested',
+  synthetic: true,
+  frameId: 'frame-fixture-014',
+  timestamp: '15:21:10',
+  activeWindowTitle: 'CS685_Lecture07_Transformers.pdf — Adobe Acrobat Reader',
+  ocrExtractedText: `CS 685: Lecture 7 — Scaled Dot-Product Attention
+Attention(Q, K, V) = softmax(Q K^T / sqrt(d_k)) V
+MultiHead(Q, K, V) = Concat(head_1, ..., head_h) W^O
+where head_i = Attention(Q W_i^Q, K W_i^K, V W_i^V)
+Complexity: O(n^2 * d) memory and computation per layer.`,
+  metadata: {
+    resolution: '1920x1080',
+    colorSpace: 'sRGB',
+    privacyFilterApplied: true,
+    maskedElementsCount: 2,
+  },
+};
+
+/**
+ * Academic Sources grounded from W3 reasoning engine contracts.
+ */
+export const INITIAL_ACADEMIC_SOURCES: AcademicSourceReference[] = [
+  {
+    sourceId: 'src-vaswani-2017',
+    title: 'Vaswani et al. (2017) "Attention Is All You Need"',
+    snippet: '§3.2 Multi-Head Attention: Allows the model to jointly attend to information from different representation subspaces at different positions.',
+    uriOrPath: 'https://arxiv.org/abs/1706.03762',
+    relevanceScore: 0.99,
+    sourceType: 'textbook',
+  },
+  {
+    sourceId: 'src-syllabus-w4',
+    title: 'CS 685 Course Syllabus — Module 4: Sequence Transduction',
+    snippet: 'Module 4 covers self-attention, multi-head projection matrices, causal decoders, and quadratic complexity trade-offs.',
+    uriOrPath: 'canvas.university.edu/courses/685/modules/4',
+    relevanceScore: 0.95,
+    sourceType: 'syllabus',
+  },
+  {
+    sourceId: 'src-slide-14',
+    title: 'Lecture 7 Slide 14: Multi-Head Scaled Dot-Product Attention',
+    snippet: 'Diagram showing linear projections W_i^Q, W_i^K, W_i^V, Scaled Dot-Product Attention, and final concat with projection W^O.',
+    uriOrPath: 'CS685_Lecture07_Transformers.pdf#page=14',
+    relevanceScore: 0.98,
+    sourceType: 'slide',
   },
 ];
 
@@ -143,6 +215,10 @@ export const SAMPLE_VOICE_PROMPTS = [
     query: 'Summarize the core takeaways of the current slide and explain the computational complexity.',
   },
   {
+    label: 'Demonstrate Interim Revisions',
+    query: 'What is the computational complexity of self-attention with respect to sequence length?',
+  },
+  {
     label: 'Generate Practice Questions',
     query: 'Generate three multiple-choice practice questions on self-attention mechanisms with answer keys.',
   },
@@ -162,8 +238,7 @@ export const INITIAL_NOTIFICATIONS: SystemNotification[] = [
     id: 'notif-1',
     type: 'info',
     title: 'Session Ready',
-    message: 'Audio input detected at 48kHz. Privacy Shield is active; screen OCR will redact confidential student data.',
+    message: 'Audio input detected at 48kHz. Privacy Shield is active; screen context is OFF by default.',
     timestamp: '15:20:00',
   },
 ];
-

@@ -1,7 +1,7 @@
 import React from 'react';
 import type { SystemNotification } from '../../types/copilot';
 
-interface AlertBannerProps {
+export interface AlertBannerProps {
   notifications: SystemNotification[];
   onDismiss: (id: string) => void;
 }
@@ -47,11 +47,29 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({ notifications, onDismi
               </svg>
             )}
           </div>
+
           <div className="alert-content">
             <span className="alert-title">{notif.title}</span>
             <p className="alert-message">{notif.message}</p>
           </div>
+
+          {/* Action button if retryable */}
+          {notif.retryAction && (
+            <button
+              type="button"
+              className="btn-alert-action"
+              onClick={() => {
+                notif.retryAction?.();
+                onDismiss(notif.id);
+              }}
+              aria-label={`Retry action: ${notif.retryLabel || 'Retry'}`}
+            >
+              {notif.retryLabel || 'Retry'}
+            </button>
+          )}
+
           <span className="alert-time">{notif.timestamp}</span>
+
           <button
             type="button"
             className="alert-dismiss"
@@ -68,4 +86,3 @@ export const AlertBanner: React.FC<AlertBannerProps> = ({ notifications, onDismi
     </div>
   );
 };
-
