@@ -26,13 +26,15 @@ def main() -> None:
 ========================================================================
   ACADEMIAAI AI VOICEBOT BACKEND - TEAM SDE 7
   Workstream: W5 - Backend, Sessions and Observability
-  Scope:      Week 1 Implementation (Application Skeleton & Sessions)
+  Scope:      Week 2 Implementation (Session Lifecycle, SSE Streaming & Observability)
   Status:     MOCK MODE ACTIVE (No external API keys required)
 ========================================================================
   Base URL:      http://{settings.host}:{settings.port}
   Health Check:  http://{settings.host}:{settings.port}/health
   Readiness:     http://{settings.host}:{settings.port}/ready
+  Standard Sess: POST http://{settings.host}:{settings.port}/api/v1/sessions
   Mock Session:  POST http://{settings.host}:{settings.port}/api/v1/sessions/mock
+  Event Stream:  GET  http://{settings.host}:{settings.port}/api/v1/sessions/{'{session_id}'}/events/stream
   Swagger Docs:  http://{settings.host}:{settings.port}/docs
 ========================================================================
 """

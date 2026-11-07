@@ -1,5 +1,6 @@
 """Abstract repository interface for session persistence."""
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
@@ -31,12 +32,24 @@ class BaseSessionRepository(ABC):
 
     @abstractmethod
     async def add_event(self, session_id: str, event: SessionEvent) -> SessionEvent:
-        """Append an event to a session's event history."""
+        """Append an event to a session's event history and notify active subscribers."""
         pass
 
     @abstractmethod
-    async def get_events(self, session_id: str) -> List[SessionEvent]:
-        """Retrieve all events associated with a session ID."""
+    async def get_events(
+        self, session_id: str, since_event_id: Optional[str] = None
+    ) -> List[SessionEvent]:
+        """Retrieve chronological events associated with a session ID, optionally after since_event_id."""
+        pass
+
+    @abstractmethod
+    async def subscribe_events(self, session_id: str) -> asyncio.Queue:
+        """Subscribe to real-time events for a session."""
+        pass
+
+    @abstractmethod
+    async def unsubscribe_events(self, session_id: str, queue: asyncio.Queue) -> None:
+        """Unsubscribe from real-time events for a session."""
         pass
 
     @abstractmethod

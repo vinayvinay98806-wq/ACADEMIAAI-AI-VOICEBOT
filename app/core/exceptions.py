@@ -88,3 +88,36 @@ class ServiceUnavailableError(AppException):
             status_code=503,
             details=details,
         )
+
+
+class PayloadTooLargeError(AppException):
+    """Raised when a request payload exceeds the configured maximum allowed size."""
+
+    def __init__(
+        self,
+        max_bytes: int,
+        received_bytes: Optional[int] = None,
+        message: Optional[str] = None,
+    ):
+        msg = message or f"Request payload exceeds maximum allowed size of {max_bytes} bytes."
+        details = {"max_bytes": max_bytes}
+        if received_bytes is not None:
+            details["received_bytes"] = received_bytes
+        super().__init__(
+            message=msg,
+            code="PAYLOAD_TOO_LARGE",
+            status_code=413,
+            details=details,
+        )
+
+
+class ConfigurationError(AppException):
+    """Raised when application startup configuration is missing or invalid."""
+
+    def __init__(self, message: str, details: Optional[Any] = None):
+        super().__init__(
+            message=message,
+            code="CONFIGURATION_ERROR",
+            status_code=500,
+            details=details,
+        )

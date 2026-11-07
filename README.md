@@ -1,115 +1,164 @@
 # Academiaai AI Voicebot Backend (Team SDE 7)
 
-## Workstream W5: Backend, Sessions and Observability — Week 1 Implementation
+## Workstream W5: Backend, Sessions and Observability — Week 2 Implementation
 
-Welcome to the backend service for the **Academiaai AI Voicebot**, developed by **Team SDE 7**. This repository hosts the implementation of **Workstream W5 (Backend, Sessions, and Observability)** for **Week 1** in accordance with the official 30-Day Execution Plan.
-
----
-
-## 1. Executive Summary & Week 1 Scope
-
-Week 1 establishes the rock-solid foundation for the voicebot backend:
-- **Application Skeleton**: Modular FastAPI application runnable in standalone **Mock Mode** without requiring paid external AI API keys or third-party audio service credentials.
-- **Health & Readiness Endpoints**: Lightweight `/health` and `/ready` probes suitable for liveness/readiness checks and automated testing.
-- **Typed Error Envelope**: Standardized, predictable JSON error contracts (`success: false`, `error: {code, message, request_id, details}`) preventing leaks of stack traces or internals.
-- **Request & Correlation-ID Middleware**: Contextual tracking using `X-Request-ID` and `X-Correlation-ID` headers with input sanitization and structured logging injection.
-- **Session State Machine & In-Memory Repository**: Clean state definitions (`initializing`, `active`, `idle`, `paused`, `completed`, `failed`) and thread-safe in-memory storage.
-- **Mock Session Route**: Deterministic mock session generation and initial mock event production (`POST /api/v1/sessions/mock`).
-- **One-Command Launcher**: Single command execution (`python run_mock.py`).
-- **Automated Test Suite**: 22 unit and integration tests passing with 100% success rate.
+Welcome to the backend service for the **Academiaai AI Voicebot**, developed by **Team SDE 7**. This repository hosts the implementation of **Workstream W5 (Backend, Sessions, and Observability)** covering both **Week 1** foundation and **Week 2 (Days 8–14)** complete session lifecycle, Server-Sent Events (SSE) streaming, configurable payload limits, startup configuration validation, and structured observability.
 
 ---
 
-## 2. Architecture & Folder Structure
+## 1. Executive Summary & Week 2 Scope
+
+Week 2 expands upon the solid Week 1 skeleton with full production-grade lifecycle capabilities:
+
+- **Complete Session Lifecycle (Days 8–9)**:
+  - Standard session creation with custom TTL support (`POST /api/v1/sessions`).
+  - Session pause (`POST /api/v1/sessions/{session_id}/pause`).
+  - Session resume (`POST /api/v1/sessions/{session_id}/resume`).
+  - Session stop/completion (`POST /api/v1/sessions/{session_id}/stop`).
+  - Explicit and automatic session expiry (`POST /api/v1/sessions/{session_id}/expire`).
+  - **Idempotency**: Repeated commands (e.g. pausing an already paused session or stopping a completed session) return `200 OK` as no-ops without creating duplicate events or corrupting state.
+  - **Terminal State Protection**: Transitions out of `completed`, `expired`, or `failed` are strictly rejected with `409 Conflict` typed errors.
+  - **Lifecycle Timestamps**: Automated tracking of `created_at`, `updated_at`, `expires_at`, and `ended_at`.
+- **Event Streaming & Replay (Days 10–11)**:
+  - Real-time Server-Sent Events (SSE) endpoint (`GET /api/v1/sessions/{session_id}/events/stream`).
+  - Strict chronological event ordering (`id: ...`, `event: ...`, `data: ...`).
+  - Reconnect and replay capabilities via `Last-Event-ID` header and `?since_id=...` query parameter.
+  - Safe disconnection handling and pubsub subscriber decoupling.
+  - Unknown session validation returning typed `404 Not Found` error envelopes.
+- **Request Validation & Payload Limits (Days 10–11)**:
+  - Configurable payload limits (`max_payload_size_bytes`, default 1MB).
+  - Rapid rejection of oversized payloads (`413 Payload Too Large`) with typed error envelopes.
+  - Strict Pydantic input validation rejecting malformed payloads (`422 Unprocessable Content`).
+- **Startup Configuration Validation & Structured Logging (Days 12–13)**:
+  - Centralized settings validation on startup in FastAPI `lifespan`.
+  - Safe mock-mode defaults allowing zero-credential execution.
+  - Strict production-mode checks failing safely when required API keys or database URLs are missing.
+  - Sensitive credential masking (`safe_dict()` and regex log filter redacting tokens, keys, passwords).
+  - Structured logging with `request_id`, `correlation_id`, and `session_id` context propagation.
+- **Comprehensive Verification (Day 14)**:
+  - 49 automated unit and integration tests passing with 100% success rate.
+  - Interactive demonstration scripts (`demo_week1.py` and `demo_week2.py`).
+
+---
+
+## 2. Architecture & Project Structure
+
+The project strictly follows layered architecture principles, decoupling Routers, Domain Services, Repositories, and Core Infrastructure:
 
 ```
 .
 ├── app/
 │   ├── __init__.py                # Package initialization and version definition
-│   ├── main.py                    # FastAPI application factory, lifespan, error handlers
-│   ├── config.py                  # Pydantic Settings configuration (mock mode, ports, etc.)
+│   ├── main.py                    # FastAPI application factory, lifespan startup validation, error handlers
+│   ├── config.py                  # Centralized Pydantic Settings & startup configuration validation
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── exceptions.py          # Typed domain exceptions (AppException, SessionNotFoundError, etc.)
-│   │   ├── logging.py             # Contextual logging with request/correlation ID filters
-│   │   └── middleware.py          # Request & Correlation ID middleware (X-Request-ID, X-Correlation-ID)
+│   │   ├── exceptions.py          # Domain exceptions (AppException, PayloadTooLargeError, etc.)
+│   │   ├── logging.py             # Structured logging, JSON formatter, contextvars, sensitive data masking
+│   │   └── middleware.py          # Request ID, Correlation ID tracking, and Payload Size Limit enforcement
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── errors.py              # Error envelope schemas (ErrorDetail, ErrorEnvelope)
+│   │   ├── errors.py              # Standardized ErrorDetail and ErrorEnvelope schemas
 │   │   ├── health.py              # HealthResponse and ReadinessResponse schemas
-│   │   └── session.py             # SessionState enum, Session, SessionEvent, response envelopes
+│   │   └── session.py             # SessionState enum, Session, SessionEvent, lifecycle request/response schemas
 │   ├── repositories/
 │   │   ├── __init__.py
-│   │   ├── base.py                # BaseSessionRepository abstract interface
-│   │   └── in_memory_session.py   # Thread-safe in-memory session and event store
+│   │   ├── base.py                # BaseSessionRepository interface with pubsub methods
+│   │   └── in_memory_session.py   # Thread-safe in-memory store with subscriber broadcast queues
+│   ├── services/
+│   │   ├── __init__.py
+│   │   └── session_service.py     # Domain service: lifecycle orchestration, idempotency, auto-expiry
 │   └── routers/
 │       ├── __init__.py
 │       ├── health.py              # Liveness (/health) and readiness (/ready) routes
-│       └── sessions.py            # Mock session start, get, list, events, and state transitions
+│       └── sessions.py            # Session CRUD, lifecycle routes (pause/resume/stop/expire), and SSE stream
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py                # TestClient and repository reset fixtures
+│   ├── test_config_logging.py     # Tests for startup validation, correlation ID, secret masking, JSON logging
 │   ├── test_errors.py             # Tests for 404, 422, and 500 error envelopes
 │   ├── test_health.py             # Tests for /health and /ready endpoints
-│   ├── test_middleware.py         # Tests for request ID generation and header propagation
-│   ├── test_mock_session.py       # Tests for mock session creation, events, and state rules
-│   └── test_repository.py         # Unit tests for InMemorySessionRepository
-├── pyproject.toml                 # Modern Python package configuration
+│   ├── test_lifecycle.py          # Tests for create, pause, resume, stop, expire, idempotency, auto-expiry
+│   ├── test_middleware.py         # Tests for ID generation, header preservation, sanitization
+│   ├── test_mock_session.py       # Tests for Week 1 mock routes and basic transitions
+│   ├── test_repository.py         # Unit tests for InMemorySessionRepository
+│   ├── test_streaming.py          # Tests for SSE streaming format, chronological order, replay via Last-Event-ID
+│   └── test_validation_limits.py  # Tests for 413 payload limits, 422 validation, unknown session 404s
+├── pyproject.toml                 # Package configuration (hatchling wheel build target configured)
 ├── requirements.txt               # Pinned dependencies
 ├── run_mock.py                    # One-command mock mode launcher
-├── .gitignore                     # Git ignore rules
-└── README.md                      # Comprehensive documentation and demonstration guide
+├── demo_week1.py                  # Week 1 interactive demonstration script
+├── demo_week2.py                  # Week 2 comprehensive interactive demonstration script
+└── README.md                      # Complete system documentation
 ```
 
 ---
 
-## 3. Session State Machine
+## 3. Session State Machine & Lifecycle Transitions
 
-The session lifecycle for Week 1 enforces safe transitions between well-defined states:
+The state machine governs all valid state transitions and guarantees terminal state safety:
 
 ```
-          ┌──────────────┐
-          │ INITIALIZING │
-          └──────┬───────┘
-                 │
-                 ▼
-          ┌──────────────┐◄───────────────┐
-          │    ACTIVE    │               │
-          └──┬───┬───┬───┘               │
-             │   │   │                   │
-     ┌───────┘   │   └───────┐           │
-     ▼           ▼           ▼           │
-┌────────┐  ┌────────┐  ┌───────────┐    │
-│  IDLE  │  │ PAUSED │  │ COMPLETED │(Terminal)
-└───┬────┘  └───┬────┘  └───────────┘
-    │           │             ▲
-    └───────────┴─────────────┘
-                 │
-                 ▼ (from any non-terminal state on error)
-          ┌───────────┐
-          │  FAILED   │(Terminal)
-          └───────────┘
+                      ┌──────────────┐
+                      │ INITIALIZING │
+                      └──────┬───────┘
+                             │
+                             ▼
+     ┌────────────────>┌──────────────┐<────────────────┐
+     │                 │    ACTIVE    │                 │
+     │                 └──┬───┬───┬───┘                 │
+     │                    │   │   │                     │
+     │            ┌───────┘   │   └───────┐             │
+     │            ▼           ▼           ▼             │
+     │       ┌────────┐  ┌────────┐  ┌───────────┐      │
+     └───────┤  IDLE  │  │ PAUSED │  │ COMPLETED │(Term)│
+             └───┬────┘  └───┬────┘  └───────────┘      │
+                 │           │             ▲            │
+                 └───────────┼─────────────┘            │
+                             │                          │
+                             ▼ (Resume)                 │
+                             └──────────────────────────┘
+                             │
+                             ▼ (TTL / explicit timeout)
+                      ┌───────────┐
+                      │  EXPIRED  │(Terminal)
+                      └───────────┘
+                             ▲
+                             │ (from any non-terminal on failure)
+                      ┌───────────┐
+                      │  FAILED   │(Terminal)
+                      └───────────┘
 ```
 
-- **Valid Transitions**:
-  - `INITIALIZING` &rarr; `ACTIVE`, `FAILED`
-  - `ACTIVE` &rarr; `IDLE`, `PAUSED`, `COMPLETED`, `FAILED`
-  - `IDLE` &rarr; `ACTIVE`, `PAUSED`, `COMPLETED`, `FAILED`
-  - `PAUSED` &rarr; `ACTIVE`, `COMPLETED`, `FAILED`
-- **Terminal States**: `COMPLETED` and `FAILED` cannot transition to any other state. Attempting to transition out of a terminal state raises a `409 Conflict` typed error.
+### Transition Rules
+
+| Current State | Permitted Target States | Notes |
+| :--- | :--- | :--- |
+| `INITIALIZING` | `ACTIVE`, `FAILED` | Session initialization phase |
+| `ACTIVE` | `IDLE`, `PAUSED`, `COMPLETED`, `EXPIRED`, `FAILED` | Standard operational state |
+| `IDLE` | `ACTIVE`, `PAUSED`, `COMPLETED`, `EXPIRED`, `FAILED` | Inactive operational state |
+| `PAUSED` | `ACTIVE`, `COMPLETED`, `EXPIRED`, `FAILED` | Resuming transitions back to `ACTIVE` |
+| `COMPLETED` | *(None)* | **Terminal State**. Transitions out raise `409 Conflict`. |
+| `EXPIRED` | *(None)* | **Terminal State**. Transitions out raise `409 Conflict`. |
+| `FAILED` | *(None)* | **Terminal State**. Transitions out raise `409 Conflict`. |
+
+### Idempotency Contract
+
+- Sending a lifecycle command matching the session's current state (e.g., calling `pause` on a `PAUSED` session, `resume` on an `ACTIVE` session, or `stop` on a `COMPLETED` session) is an **idempotent no-op**.
+- The API responds with `200 OK`, returns the current session object, and does **not** record duplicate events or alter timestamps.
 
 ---
 
-## 4. API Specifications & Contracts
+## 4. API Specifications & Endpoints
 
 ### 4.1 Health and Readiness
 
 #### `GET /health` (or `GET /api/v1/health`)
-Returns the service health status and current mode.
+Returns service health status, runtime mode, and version.
 ```json
 {
   "status": "healthy",
-  "timestamp": "2026-10-27T10:19:19.776709Z",
+  "timestamp": "2026-11-07T06:30:00.000000Z",
   "service": "Academiaai AI Voicebot Backend",
   "version": "0.1.0",
   "mode": "mock"
@@ -117,11 +166,11 @@ Returns the service health status and current mode.
 ```
 
 #### `GET /ready` (or `GET /api/v1/ready`)
-Verifies readiness of local components.
+Verifies readiness of local repositories and mock components.
 ```json
 {
   "status": "ready",
-  "timestamp": "2026-10-27T10:19:19.782611Z",
+  "timestamp": "2026-11-07T06:30:00.000000Z",
   "service": "Academiaai AI Voicebot Backend",
   "dependencies": {
     "session_repository": "ready",
@@ -132,18 +181,20 @@ Verifies readiness of local components.
 
 ---
 
-### 4.2 Mock Sessions & Events
+### 4.2 Session Creation
 
-#### `POST /api/v1/sessions/mock`
-Starts a deterministic mock session and generates an initial mock audio event.
-- **Request Body (Optional)**:
+#### `POST /api/v1/sessions`
+Creates a standard voice session with configurable user ID, metadata, and custom TTL.
+
+- **Request Body**:
   ```json
   {
-    "user_id": "student-1049",
+    "user_id": "student-alice",
     "metadata": {
-      "course": "CS-501",
-      "preferred_language": "en"
-    }
+      "subject": "Calculus",
+      "topic": "Derivatives"
+    },
+    "ttl_seconds": 1800
   }
   ```
 - **Response (`201 Created`)**:
@@ -152,88 +203,165 @@ Starts a deterministic mock session and generates an initial mock audio event.
     "success": true,
     "data": {
       "session": {
-        "session_id": "mock-sess-87d1ef9d79",
-        "user_id": "student-1049",
+        "session_id": "sess-a1b2c3d4e5",
+        "user_id": "student-alice",
         "state": "active",
         "metadata": {
           "mode": "mock",
           "team": "SDE 7",
-          "workstream": "W5",
-          "course": "CS-501",
-          "preferred_language": "en"
+          "workstream": "W5: Backend, Sessions and Observability",
+          "subject": "Calculus",
+          "topic": "Derivatives"
         },
-        "created_at": "2026-10-27T10:19:19.794940Z",
-        "updated_at": "2026-10-27T10:19:19.794940Z"
+        "created_at": "2026-11-07T06:30:00.000000Z",
+        "updated_at": "2026-11-07T06:30:00.000000Z",
+        "expires_at": "2026-11-07T07:00:00.000000Z",
+        "ended_at": null
       },
       "event": {
-        "event_id": "mock-evt-87d1ef9d79",
-        "session_id": "mock-sess-87d1ef9d79",
+        "event_id": "evt-a1b2c3d4e5",
+        "session_id": "sess-a1b2c3d4e5",
         "event_type": "session.started",
         "payload": {
-          "message": "Mock voice session initialized successfully",
-          "bot_name": "Academiaai-Voicebot",
-          "audio_channel": "mock-stream",
-          "sample_rate_hz": 16000,
-          "codec": "pcm_s16le",
-          "initial_prompt": "Hello! Welcome to Academiaai. How can I assist you with your academic queries today?",
+          "message": "Voice session initialized successfully",
+          "user_id": "student-alice",
+          "ttl_seconds": 1800,
+          "expires_at": "2026-11-07T07:00:00+00:00",
           "mock_mode": true
         },
-        "timestamp": "2026-10-27T10:19:19.794940Z"
+        "timestamp": "2026-11-07T06:30:00.000000Z"
       }
     }
   }
   ```
 
-#### `GET /api/v1/sessions/{session_id}`
-Retrieves session details by session ID (`200 OK`).
+#### `POST /api/v1/sessions/mock`
+Deterministic mock session generation (retained from Week 1).
 
-#### `GET /api/v1/sessions/{session_id}/events`
-Retrieves all recorded events for the given session ID (`200 OK`).
+---
 
-#### `GET /api/v1/sessions`
-Lists all active/stored sessions (`200 OK`).
+### 4.3 Lifecycle Operations
 
-#### `POST /api/v1/sessions/{session_id}/transition`
-Transitions a session to a target state (`200 OK` on success, `409 Conflict` on illegal transition).
-- **Request Body**:
+#### `POST /api/v1/sessions/{session_id}/pause`
+Pauses an active or idle session. Idempotent if already paused.
+- **Request Body (Optional)**:
+  ```json
+  { "reason": "Student paused for a break" }
+  ```
+- **Response (`200 OK`)**:
   ```json
   {
-    "target_state": "completed"
+    "success": true,
+    "data": {
+      "session_id": "sess-a1b2c3d4e5",
+      "state": "paused",
+      "metadata": {
+        "pause_reason": "Student paused for a break",
+        "paused_at": "2026-11-07T06:35:00.000000Z"
+      }
+    },
+    "event": {
+      "event_id": "evt-pause-7890",
+      "session_id": "sess-a1b2c3d4e5",
+      "event_type": "session.paused",
+      "payload": {
+        "reason": "Student paused for a break",
+        "paused_at": "2026-11-07T06:35:00.000000Z"
+      }
+    }
   }
+  ```
+
+#### `POST /api/v1/sessions/{session_id}/resume`
+Resumes a paused session to `active`. Refreshes session TTL. Idempotent if already active.
+
+#### `POST /api/v1/sessions/{session_id}/stop`
+Stops a session and transitions it to terminal `completed` state. Sets `ended_at`. Idempotent if already completed.
+
+#### `POST /api/v1/sessions/{session_id}/expire`
+Explicitly expires a session and transitions it to terminal `expired` state. Sets `ended_at`.
+
+---
+
+### 4.4 Server-Sent Events (SSE) Streaming
+
+#### `GET /api/v1/sessions/{session_id}/events/stream`
+Streams session events in chronological order via Server-Sent Events (SSE).
+
+- **Query Parameters**:
+  - `since_id` *(optional)*: Replay only events occurring after this event ID.
+  - `follow` *(optional, default: false)*: If `true`, keeps the connection open and pushes live events in real-time.
+- **Headers**:
+  - `Last-Event-ID` *(optional)*: Replays events occurring after this ID (standard SSE reconnect header).
+- **Stream Format**:
+  ```http
+  HTTP/1.1 200 OK
+  Content-Type: text/event-stream
+  Cache-Control: no-cache
+  Connection: keep-alive
+
+  : connected to session sess-a1b2c3d4e5
+
+  id: evt-a1b2c3d4e5
+  event: session.started
+  data: {"event_id":"evt-a1b2c3d4e5","session_id":"sess-a1b2c3d4e5","event_type":"session.started","payload":{...},"timestamp":"2026-11-07T06:30:00Z"}
+
+  id: evt-pause-7890
+  event: session.paused
+  data: {"event_id":"evt-pause-7890","session_id":"sess-a1b2c3d4e5","event_type":"session.paused","payload":{...},"timestamp":"2026-11-07T06:35:00Z"}
   ```
 
 ---
 
-### 4.3 Standardized Typed Error Envelope
+### 4.5 Standard Typed Error Envelope
 
-All HTTP errors follow the typed envelope:
+All error responses strictly adhere to the typed error envelope contract:
+
 ```json
 {
   "success": false,
   "error": {
-    "code": "NOT_FOUND",
-    "message": "Session not found with ID: mock-sess-nonexistent",
-    "request_id": "req-bce6ddc54723",
+    "code": "INVALID_STATE_TRANSITION",
+    "message": "Cannot transition session from 'completed' to 'active'. Reason: Transition from 'completed' to 'active' is not permitted.",
+    "request_id": "req-9b8a7c6d5e",
     "details": {
-      "session_id": "mock-sess-nonexistent"
+      "current_state": "completed",
+      "target_state": "active",
+      "reason": "Transition from 'completed' to 'active' is not permitted."
     }
   }
 }
 ```
 
-Validation errors (`422 Unprocessable Content`):
+#### Payload Too Large (`413 Payload Too Large`):
+```json
+{
+  "success": false,
+  "error": {
+    "code": "PAYLOAD_TOO_LARGE",
+    "message": "Request payload exceeds maximum allowed size of 1048576 bytes.",
+    "request_id": "req-1234567890",
+    "details": {
+      "max_bytes": 1048576,
+      "received_bytes": 1200000
+    }
+  }
+}
+```
+
+#### Validation Error (`422 Unprocessable Content`):
 ```json
 {
   "success": false,
   "error": {
     "code": "VALIDATION_ERROR",
     "message": "Request payload validation failed.",
-    "request_id": "req-98fa201b38cf",
+    "request_id": "req-0987654321",
     "details": [
       {
-        "field": "body -> target_state",
-        "issue": "Input should be 'initializing', 'active', 'idle', 'paused', 'completed' or 'failed'",
-        "type": "enum"
+        "field": "body -> ttl_seconds",
+        "issue": "Input should be greater than 0",
+        "type": "greater_than"
       }
     ]
   }
@@ -242,16 +370,49 @@ Validation errors (`422 Unprocessable Content`):
 
 ---
 
-## 5. Getting Started & Running the Application
+## 5. Startup Configuration & Structured Logging
 
-### 5.1 Prerequisites
-- Python 3.12+ (or `uv`)
+### 5.1 Configuration Options
 
-### 5.2 Setup Environment
+All settings are centralized in `app/config.py` and configurable via environment variables:
+
+| Variable | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `MOCK_MODE` | `bool` | `True` | Standalone mock mode (zero external credentials needed) |
+| `HOST` | `str` | `127.0.0.1` | Binding host address |
+| `PORT` | `int` | `8000` | Port (validated between 1 and 65535) |
+| `LOG_LEVEL` | `str` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `LOG_FORMAT` | `str` | `text` | Log format: `text` or `json` (for log aggregators) |
+| `SESSION_TTL_SECONDS`| `int` | `1800` | Default session idle timeout in seconds (30 mins) |
+| `MAX_PAYLOAD_SIZE_BYTES` | `int` | `1048576` | Maximum allowed request size in bytes (1MB) |
+| `AI_SERVICE_API_KEY` | `str` | `None` | External AI key (required in production mode) |
+| `DATABASE_URL` | `str` | `None` | Production database connection string |
+
+### 5.2 Safe Startup & Production Guardrails
+
+- When `MOCK_MODE=True`, the application initializes immediately with safe mock defaults and requires zero credentials.
+- When `MOCK_MODE=False` (production), startup validation automatically verifies the existence and validity of `AI_SERVICE_API_KEY` and `DATABASE_URL`. If missing or invalid, the service terminates safely with a `ConfigurationError`.
+- Secrets are masked using `settings.safe_dict()`, ensuring API keys and passwords never leak into logs.
+
+### 5.3 Structured Logging & Context Propagation
+
+Every log line captures request and session correlation details:
+```
+2026-11-07 12:02:24 [INFO] [req_id=req-cd02d9caf60b] [corr_id=req-cd02d9caf60b] [sess_id=sess-937f8b75f9] academiaai: Resumed session sess-937f8b75f9
+```
+A regex-based `SensitiveDataFilter` automatically scans all log messages and redacts keys, tokens, and authorization headers with `***REDACTED***`.
+
+---
+
+## 6. Getting Started & Verification
+
+### 6.1 Setup Environment
+
 ```bash
 # Using uv (recommended)
 uv venv --python 3.12
 uv pip install -r requirements.txt
+uv pip install -e .
 
 # Or using standard python
 python -m venv .venv
@@ -260,138 +421,31 @@ python -m venv .venv
 # Linux/macOS:
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e .
 ```
 
-### 5.3 One-Command Mock-Mode Launcher (Task 8)
-Run the application with zero external credentials:
+### 6.2 Running the Application
+
+Launch the server in standalone mock mode:
 ```bash
 python run_mock.py
 ```
-Output:
-```
-========================================================================
-  ACADEMIAAI AI VOICEBOT BACKEND - TEAM SDE 7
-  Workstream: W5 - Backend, Sessions and Observability
-  Scope:      Week 1 Implementation (Application Skeleton & Sessions)
-  Status:     MOCK MODE ACTIVE (No external API keys required)
-========================================================================
-  Base URL:      http://127.0.0.1:8000
-  Health Check:  http://127.0.0.1:8000/health
-  Readiness:     http://127.0.0.1:8000/ready
-  Mock Session:  POST http://127.0.0.1:8000/api/v1/sessions/mock
-  Swagger Docs:  http://127.0.0.1:8000/docs
-========================================================================
-```
 
----
+### 6.3 Executing the Test Suite
 
-## 6. Running Automated Tests (Task 9)
-
-Execute the full test suite covering all Week 1 features:
+Run the full automated test suite covering all 17 test categories:
 ```bash
 pytest -v
 ```
 
-Test Results:
-```
-============================= test session starts =============================
-platform win32 -- Python 3.12.14, pytest-9.1.1
-collected 22 items
+**Results: 49 passed in ~0.75 seconds.**
 
-tests/test_errors.py::test_404_typed_error_envelope PASSED               [  4%]
-tests/test_errors.py::test_session_not_found_envelope PASSED             [  9%]
-tests/test_errors.py::test_422_validation_error_envelope PASSED          [ 13%]
-tests/test_health.py::test_health_check_returns_ok PASSED                [ 18%]
-tests/test_health.py::test_readiness_check_returns_ready PASSED          [ 22%]
-tests/test_health.py::test_versioned_health_and_readiness PASSED         [ 27%]
-tests/test_middleware.py::test_generates_request_and_correlation_ids_when_missing PASSED [ 31%]
-tests/test_middleware.py::test_preserves_valid_incoming_request_id PASSED [ 36%]
-tests/test_middleware.py::test_preserves_valid_incoming_correlation_id PASSED [ 40%]
-tests/test_middleware.py::test_sanitizes_malformed_incoming_ids PASSED   [ 45%]
-tests/test_middleware.py::test_handles_excessively_long_ids PASSED       [ 50%]
-tests/test_mock_session.py::test_start_mock_session_default PASSED       [ 54%]
-tests/test_mock_session.py::test_start_mock_session_with_custom_user PASSED [ 59%]
-tests/test_mock_session.py::test_get_session_by_id PASSED                [ 63%]
-tests/test_mock_session.py::test_get_session_events PASSED               [ 68%]
-tests/test_mock_session.py::test_list_sessions PASSED                    [ 72%]
-tests/test_mock_session.py::test_session_state_transitions PASSED        [ 77%]
-tests/test_repository.py::test_repository_create_and_get PASSED          [ 81%]
-tests/test_repository.py::test_repository_get_nonexistent PASSED         [ 86%]
-tests/test_repository.py::test_repository_update_session PASSED          [ 90%]
-tests/test_repository.py::test_repository_events_storage PASSED          [ 95%]
-tests/test_repository.py::test_repository_clear PASSED                   [100%]
-
-============================== 22 passed in 0.44s ==============================
-```
-
----
-
-## 7. Week 1 Live Demonstration Guide (Task 10)
-
-Follow these steps to demonstrate the Week 1 implementation to project leads or teammates:
-
-### Step 1: Launch the backend
-```bash
-python run_mock.py
-```
-
-### Step 2: Test Health & Request ID Propagation
-```bash
-curl -i http://127.0.0.1:8000/health -H "X-Request-ID: demo-req-001"
-```
-*Expected*: Status `200 OK`, header `X-Request-ID: demo-req-001`, JSON status `healthy`.
-
-### Step 3: Test Readiness Check
-```bash
-curl -i http://127.0.0.1:8000/ready
-```
-*Expected*: Status `200 OK`, JSON status `ready`, `session_repository: ready`.
-
-### Step 4: Start a Mock Voice Session & Receive Mock Event
-```bash
-curl -i -X POST http://127.0.0.1:8000/api/v1/sessions/mock \
-     -H "Content-Type: application/json" \
-     -d '{"user_id": "demo-student-1", "metadata": {"course": "Algorithms"}}'
-```
-*Expected*: Status `201 Created`, JSON containing `session` (`state: active`) and `event` (`session.started` with initial prompt).
-
-### Step 5: Verify Session and Event Retrieval
-```bash
-# Substitute the session_id returned from Step 4
-curl -i http://127.0.0.1:8000/api/v1/sessions/{session_id}
-curl -i http://127.0.0.1:8000/api/v1/sessions/{session_id}/events
-```
-
-### Step 6: Verify State Enforcement & Error Envelope
-```bash
-# Valid transition to completed:
-curl -i -X POST http://127.0.0.1:8000/api/v1/sessions/{session_id}/transition \
-     -H "Content-Type: application/json" \
-     -d '{"target_state": "completed"}'
-
-# Illegal transition from completed -> active (returns 409 Conflict):
-curl -i -X POST http://127.0.0.1:8000/api/v1/sessions/{session_id}/transition \
-     -H "Content-Type: application/json" \
-     -d '{"target_state": "active"}'
-```
-*Expected*: `409 Conflict` response with `INVALID_STATE_TRANSITION` code and safe explanation.
-
----
-
-## 8. Suggested Git Workflow for Pull Request
-
-As per the team's Git guidelines (Rule 10: Do not push or open a PR automatically), here are the suggested steps:
+### 6.4 Running Interactive Demos
 
 ```bash
-# 1. Ensure you are on a dedicated feature branch
-git checkout -b feature/w5-week1-backend-sessions-skeleton
+# Run Week 1 demonstration
+python demo_week1.py
 
-# 2. Stage the newly created Week 1 files
-git add app/ tests/ pyproject.toml requirements.txt run_mock.py .gitignore README.md
-
-# 3. Commit with semantic convention
-git commit -m "feat(w5): implement Week 1 backend skeleton, session models, in-memory repository, and mock route"
-
-# 4. Push to remote and open Pull Request for Team SDE 7 review
-git push -u origin feature/w5-week1-backend-sessions-skeleton
+# Run Week 2 complete lifecycle & streaming demonstration
+python demo_week2.py
 ```

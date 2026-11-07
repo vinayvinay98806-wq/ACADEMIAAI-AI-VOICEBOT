@@ -9,7 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import get_settings
 from app.core.exceptions import AppException
-from app.core.logging import logger
+from app.core.logging import logger, setup_logging
 from app.core.middleware import RequestCorrelationMiddleware
 from app.models.errors import ErrorDetail, ErrorEnvelope
 from app.routers import health, sessions
@@ -17,13 +17,22 @@ from app.routers import health, sessions
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan context manager for startup and shutdown events."""
+    """Application lifespan context manager for startup validation and shutdown events."""
     settings = get_settings()
+
+    # Configure structured logger according to settings
+    setup_logging(level=settings.log_level, format_type=settings.log_format)
+
+    # Startup configuration validation
     logger.info(
-        f"Starting {settings.app_name} [Team: {settings.team}] "
+        f"Validating startup configuration for {settings.app_name} [Team: {settings.team}] "
         f"[Workstream: {settings.workstream}] [Mode: {'MOCK' if settings.mock_mode else 'PROD'}]"
     )
+    settings.validate_startup_configuration()
+    logger.info("Startup configuration validated successfully.")
+
     yield
+
     logger.info(f"Shutting down {settings.app_name}")
 
 
@@ -35,7 +44,7 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         description=(
             "Academiaai AI Voicebot Backend - Team SDE 7\n"
-            "Workstream W5: Backend, Sessions and Observability (Week 1)"
+            "Workstream W5: Backend, Sessions and Observability (Week 2 Complete Lifecycle & Streaming)"
         ),
         version=settings.version,
         lifespan=lifespan,
@@ -44,7 +53,7 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
-    # 1. Register Request and Correlation ID Middleware
+    # 1. Register Request, Correlation ID, and Payload Limit Middleware
     app.add_middleware(RequestCorrelationMiddleware)
 
     # 2. Register Global Exception Handlers for Typed Error Envelope
@@ -110,6 +119,7 @@ def create_app() -> FastAPI:
             404: "NOT_FOUND",
             405: "METHOD_NOT_ALLOWED",
             409: "CONFLICT",
+            413: "PAYLOAD_TOO_LARGE",
             500: "INTERNAL_ERROR",
             503: "SERVICE_UNAVAILABLE",
         }
