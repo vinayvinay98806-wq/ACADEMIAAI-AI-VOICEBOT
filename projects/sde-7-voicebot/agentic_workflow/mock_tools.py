@@ -11,7 +11,7 @@ validation, and invocation tracking.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from .schemas import ToolSpec, WorkflowResult
 
 
@@ -79,6 +79,8 @@ ACADEMIC_LOOKUP_SPEC = ToolSpec(
     name="academic_lookup",
     description="Deterministically look up student profile or course catalog information",
     is_consequential=False,
+    required_permissions=["academic:read"],
+    is_idempotent=True,
     parameters_schema={
         "record_type": {
             "type": "str",
@@ -142,6 +144,8 @@ STUDENT_STATUS_UPDATE_SPEC = ToolSpec(
     name="student_status_update",
     description="Update student enrollment or academic status (consequential action requiring explicit approval)",
     is_consequential=True,
+    required_permissions=["academic:write"],
+    is_idempotent=False,
     parameters_schema={
         "student_id": {
             "type": "str",
@@ -250,13 +254,104 @@ class ToolRegistry:
         """Return list of all registered tool specifications."""
         return [spec for spec, _ in self._tools.values()]
 
-    def execute(self, name: str, payload: Dict[str, Any]) -> WorkflowResult:
+    def check_permissions(
+        self,
+        name: str,
+        granted_permissions: Optional[Set[str] | List[str]],
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Check if granted_permissions satisfies tool's required_permissions.
+        Returns (True, None) if permitted, or (False, error_message) if unauthorized.
+        """
+        if name not in self._tools:
+            return False, f"Tool '{name}' is not registered in the allow-list."
+
+        if granted_permissions is None:
+            return True, None
+
+        spec = self.get_spec(name)
+        granted_set = set(granted_permissions)
+        missing = [p for p in spec.required_permissions if p not in granted_set]
+        if missing:
+            return (
+                False,
+                f"Permission scope violation: Tool '{name}' requires permission(s) {missing}, "
+                f"but caller was only granted {sorted(list(granted_set))}.",
+            )
+        return True, None
+
+    def validate_payload(self, name: str, payload: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        """
+        Validate input payload against the tool's defined parameters_schema.
+        Returns (True, None) if valid, or (False, error_message) if invalid.
+        """
+        if name not in self._tools:
+            return False, f"Tool '{name}' is not registered in the allow-list."
+
+        spec = self.get_spec(name)
+        schema = spec.parameters_schema
+        payload = payload or {}
+
+        for param_name, param_rule in schema.items():
+            is_required = param_rule.get("required", False)
+            if is_required and param_name not in payload:
+                return False, f"Tool '{name}' missing required parameter '{param_name}'."
+
+            if param_name in payload:
+                val = payload[param_name]
+                expected_type = param_rule.get("type")
+                if expected_type == "str" and not isinstance(val, str):
+                    return False, f"Tool '{name}' parameter '{param_name}' must be a str, got {type(val).__name__}."
+                elif expected_type == "int" and (not isinstance(val, int) or isinstance(val, bool)):
+                    return False, f"Tool '{name}' parameter '{param_name}' must be an int, got {type(val).__name__}."
+                elif expected_type == "float" and (not isinstance(val, (int, float)) or isinstance(val, bool)):
+                    return False, f"Tool '{name}' parameter '{param_name}' must be a float, got {type(val).__name__}."
+                elif expected_type == "bool" and not isinstance(val, bool):
+                    return False, f"Tool '{name}' parameter '{param_name}' must be a bool, got {type(val).__name__}."
+                elif expected_type == "list" and not isinstance(val, list):
+                    return False, f"Tool '{name}' parameter '{param_name}' must be a list, got {type(val).__name__}."
+                elif expected_type == "dict" and not isinstance(val, dict):
+                    return False, f"Tool '{name}' parameter '{param_name}' must be a dict, got {type(val).__name__}."
+
+                allowed_values = param_rule.get("allowed_values")
+                if allowed_values and val not in allowed_values:
+                    return (
+                        False,
+                        f"Tool '{name}' parameter '{param_name}' value '{val}' not in allowed values: {allowed_values}.",
+                    )
+
+        return True, None
+
+    def execute(
+        self,
+        name: str,
+        payload: Dict[str, Any],
+        caller_permissions: Optional[Set[str] | List[str]] = None,
+    ) -> WorkflowResult:
         """
         Execute a registered tool handler with the given payload.
-        Increments the tool invocation counter upon actual invocation.
+        Enforces allow-list registration, permission scope verification, and payload validation.
+        Increments the tool invocation counter strictly upon actual invocation.
         """
         if name not in self._tools:
             return WorkflowResult.fail(f"Tool '{name}' is not registered in the allow-list.")
+
+        # 1. Enforce permission scopes
+        if caller_permissions is not None:
+            perm_ok, perm_err = self.check_permissions(name, caller_permissions)
+            if not perm_ok:
+                return WorkflowResult.fail(
+                    error=perm_err,
+                    metadata={"permission_violation": True, "tool_name": name},
+                )
+
+        # 2. Enforce argument schema validation
+        val_ok, val_err = self.validate_payload(name, payload)
+        if not val_ok:
+            return WorkflowResult.fail(
+                error=val_err,
+                metadata={"payload_invalid": True, "tool_name": name},
+            )
 
         spec, handler = self._tools[name]
         self._invocation_counts[name] = self._invocation_counts.get(name, 0) + 1

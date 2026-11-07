@@ -25,21 +25,27 @@ class PlanValidationError(ValueError):
 class PlanValidator:
     """
     Static analyzer validating WorkflowPlan structures, tool references,
-    parameter schemas, and acyclic dependency graphs (DAGs).
+    parameter schemas, permission scopes, acyclic dependency graphs (DAGs),
+    and execution order consistency.
     """
 
     def __init__(self, registry: Optional[ToolRegistry] = None) -> None:
         self.registry = registry
 
-    def validate(self, plan: WorkflowPlan) -> None:
+    def validate(
+        self,
+        plan: WorkflowPlan,
+        authorized_permissions: Optional[Set[str] | List[str]] = None,
+    ) -> None:
         """
         Validate a WorkflowPlan.
         Raises PlanValidationError on any validation failure.
         """
         self._validate_structure(plan)
-        self._validate_steps(plan)
+        self._validate_steps(plan, authorized_permissions=authorized_permissions)
         self._validate_dependencies(plan)
         self._validate_dag(plan)
+        self._validate_execution_order(plan)
 
     def _validate_structure(self, plan: WorkflowPlan) -> None:
         """Check top-level structure and non-empty properties."""
@@ -55,8 +61,12 @@ class PlanValidator:
         if not plan.steps or not isinstance(plan.steps, list):
             raise PlanValidationError("WorkflowPlan must contain at least one step in 'steps'.")
 
-    def _validate_steps(self, plan: WorkflowPlan) -> None:
-        """Check step uniqueness, valid tool names, and parameter schemas."""
+    def _validate_steps(
+        self,
+        plan: WorkflowPlan,
+        authorized_permissions: Optional[Set[str] | List[str]] = None,
+    ) -> None:
+        """Check step uniqueness, valid tool names, parameter schemas, and permission scopes."""
         seen_step_ids: Set[str] = set()
 
         for idx, step in enumerate(plan.steps):
@@ -83,6 +93,14 @@ class PlanValidator:
                 spec = self.registry.get_spec(step.tool_name)
                 self._validate_parameters(step, spec)
 
+                # Validate permission scopes if authorized_permissions is specified
+                if authorized_permissions is not None:
+                    perm_ok, perm_err = self.registry.check_permissions(step.tool_name, authorized_permissions)
+                    if not perm_ok:
+                        raise PlanValidationError(
+                            f"Permission-scope violation for step '{step.step_id}': {perm_err}"
+                        )
+
     def _validate_parameters(self, step: WorkflowStep, spec: ToolSpec) -> None:
         """Validate input payload against ToolSpec parameters_schema."""
         schema = spec.parameters_schema
@@ -97,6 +115,10 @@ class PlanValidator:
 
             if param_name in payload:
                 val = payload[param_name]
+                # If value is a dynamic reference like '$step_id.key' or '{{step_id.key}}', skip static type check
+                if isinstance(val, str) and (val.startswith("$") or (val.startswith("{{") and val.endswith("}}"))):
+                    continue
+
                 expected_type = param_rule.get("type")
                 if expected_type == "str" and not isinstance(val, str):
                     raise PlanValidationError(
@@ -105,6 +127,22 @@ class PlanValidator:
                 elif expected_type == "int" and (not isinstance(val, int) or isinstance(val, bool)):
                     raise PlanValidationError(
                         f"Step '{step.step_id}' parameter '{param_name}' must be an int, got {type(val).__name__}."
+                    )
+                elif expected_type == "float" and (not isinstance(val, (int, float)) or isinstance(val, bool)):
+                    raise PlanValidationError(
+                        f"Step '{step.step_id}' parameter '{param_name}' must be a float, got {type(val).__name__}."
+                    )
+                elif expected_type == "bool" and not isinstance(val, bool):
+                    raise PlanValidationError(
+                        f"Step '{step.step_id}' parameter '{param_name}' must be a bool, got {type(val).__name__}."
+                    )
+                elif expected_type == "list" and not isinstance(val, list):
+                    raise PlanValidationError(
+                        f"Step '{step.step_id}' parameter '{param_name}' must be a list, got {type(val).__name__}."
+                    )
+                elif expected_type == "dict" and not isinstance(val, dict):
+                    raise PlanValidationError(
+                        f"Step '{step.step_id}' parameter '{param_name}' must be a dict, got {type(val).__name__}."
                     )
 
                 allowed_values = param_rule.get("allowed_values")
@@ -155,3 +193,51 @@ class PlanValidator:
         for step in plan.steps:
             if state[step.step_id] == 0:
                 dfs(step.step_id, [])
+
+    def _validate_execution_order(self, plan: WorkflowPlan) -> None:
+        """
+        Validate that steps appear in executable topological order:
+        Every prerequisite dependency must appear before the dependent step in the plan step sequence.
+        """
+        step_indices: Dict[str, int] = {step.step_id: idx for idx, step in enumerate(plan.steps)}
+
+        for idx, step in enumerate(plan.steps):
+            for dep in step.dependencies:
+                dep_idx = step_indices.get(dep)
+                if dep_idx is not None and dep_idx > idx:
+                    raise PlanValidationError(
+                        f"Execution order violation: Step '{step.step_id}' (position {idx}) depends on step '{dep}' "
+                        f"(position {dep_idx}), which appears after it in execution sequence."
+                    )
+
+    def get_topological_order(self, plan: WorkflowPlan) -> List[str]:
+        """
+        Calculate and return a valid topological execution order for the steps in the plan.
+        Raises PlanValidationError if dependencies are invalid or contain a cycle.
+        """
+        self._validate_dependencies(plan)
+        self._validate_dag(plan)
+
+        in_degree: Dict[str, int] = {s.step_id: 0 for s in plan.steps}
+        dependents: Dict[str, List[str]] = {s.step_id: [] for s in plan.steps}
+
+        for step in plan.steps:
+            for dep in step.dependencies:
+                dependents[dep].append(step.step_id)
+                in_degree[step.step_id] += 1
+
+        queue: List[str] = [step_id for step_id, deg in in_degree.items() if deg == 0]
+        order: List[str] = []
+
+        while queue:
+            curr = queue.pop(0)
+            order.append(curr)
+            for nxt in dependents[curr]:
+                in_degree[nxt] -= 1
+                if in_degree[nxt] == 0:
+                    queue.append(nxt)
+
+        if len(order) != len(plan.steps):
+            raise PlanValidationError("Could not determine complete topological ordering due to cycle.")
+
+        return order

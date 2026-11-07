@@ -177,6 +177,73 @@ class TestWorkflowSchemas(unittest.TestCase):
         self.assertEqual(len(reconstructed.steps), 3)
         self.assertEqual(reconstructed.metadata["priority"], "high")
 
+    def test_approval_request_expiry_methods(self):
+        """Test ApprovalRequest expiry transition and check_expiry helper."""
+        req = ApprovalRequest(
+            request_id="req-exp",
+            workflow_id="wf-1",
+            step_id="s1",
+            tool_name="update_tool",
+            action_description="Expiring test",
+            expires_at="2020-01-01T00:00:00Z",
+        )
+        self.assertTrue(req.is_pending())
+        self.assertFalse(req.is_expired())
+
+        # check_expiry against past date
+        expired = req.check_expiry(now_iso="2020-01-02T00:00:00Z")
+        self.assertTrue(expired)
+        self.assertTrue(req.is_expired())
+        self.assertEqual(req.status, "EXPIRED")
+
+        # Expired request cannot be approved
+        with self.assertRaises(ValueError):
+            req.approve()
+
+        # Expired request cannot be rejected
+        with self.assertRaises(ValueError):
+            req.reject()
+
+    def test_tool_spec_permissions_and_idempotency(self):
+        """Test ToolSpec permissions and idempotency serialization."""
+        spec = ToolSpec(
+            name="lookup_tool",
+            description="Read-only tool",
+            parameters_schema={},
+            is_consequential=False,
+            required_permissions=["academic:read"],
+            is_idempotent=True,
+        )
+        self.assertEqual(spec.required_permissions, ["academic:read"])
+        self.assertTrue(spec.is_idempotent)
+
+        spec_dict = spec.to_dict()
+        reconstructed = ToolSpec.from_dict(spec_dict)
+        self.assertEqual(reconstructed.required_permissions, ["academic:read"])
+        self.assertTrue(reconstructed.is_idempotent)
+
+    def test_workflow_step_retries_and_timeouts(self):
+        """Test WorkflowStep retries and timeouts serialization."""
+        step = WorkflowStep(
+            step_id="step_retry",
+            tool_name="tool_a",
+            max_retries=3,
+            retry_count=1,
+            timeout_seconds=5.0,
+            is_idempotent=True,
+        )
+        self.assertEqual(step.max_retries, 3)
+        self.assertEqual(step.retry_count, 1)
+        self.assertEqual(step.timeout_seconds, 5.0)
+        self.assertTrue(step.is_idempotent)
+
+        step_dict = step.to_dict()
+        reconstructed = WorkflowStep.from_dict(step_dict)
+        self.assertEqual(reconstructed.max_retries, 3)
+        self.assertEqual(reconstructed.retry_count, 1)
+        self.assertEqual(reconstructed.timeout_seconds, 5.0)
+        self.assertTrue(reconstructed.is_idempotent)
+
 
 if __name__ == "__main__":
     unittest.main()

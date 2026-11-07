@@ -30,6 +30,11 @@ from .validator import (
     PlanValidationError,
     PlanValidator,
 )
+from .approval_manager import (
+    ApprovalAuditEntry,
+    ApprovalError,
+    ApprovalManager,
+)
 from .executor import (
     WorkflowExecutor,
 )
@@ -57,6 +62,10 @@ __all__ = [
     # Validator
     "PlanValidator",
     "PlanValidationError",
+    # Approval Manager
+    "ApprovalManager",
+    "ApprovalError",
+    "ApprovalAuditEntry",
     # Executor
     "WorkflowExecutor",
 ]

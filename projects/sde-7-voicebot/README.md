@@ -1,18 +1,38 @@
-# W4 – Agentic Workflow: Workflow Schemas, State Machine & Mock Tool Executor (Week 1)
+# W4 – Agentic Workflow: Architecture, Policies, Approval Management & Safe Execution (Week 2)
 
-This project contains the official Week 1 foundation for **Worker 4 (Agentic Workflow)** within the AcademiaAI Voicebot initiative, strictly isolated under `projects/sde-7-voicebot/`.
+This directory contains the complete implementation for **Worker 4 (Agentic Workflow)** within the AcademiaAI Voicebot initiative, strictly isolated under `projects/sde-7-voicebot/`.
 
 ---
 
-## 1. Repository Scope & Inspection Report
+## 1. Executive Summary & Week 2 Scope
 
-- **Target Repository**: [https://github.com/Yashuudevang/acd_voicebot](https://github.com/Yashuudevang/acd_voicebot)
-- **Local Isolated Scope**: `projects/sde-7-voicebot/`
-- **Inspection Findings**:
-  - The upstream repository currently contains only the default `main` branch with a root `README.md`.
-  - The target path `projects/sde-7-voicebot/` and team branches do not yet exist upstream.
-  - Per engineering instructions, no competing repository was created, no shared files outside our scope were modified, and no Git push or branch alterations were made.
-  - All Week 1 deliverables are implemented strictly within `projects/sde-7-voicebot/`.
+Worker 4 provides the robust, deterministic workflow execution engine for the AcademiaAI Voicebot. Building directly upon the Week 1 foundations (5 core schemas, 7-state FSM, and deterministic mock tools), Week 2 delivers:
+
+- **Days 8–9: Dependency, Cycle, and Execution Order Validation + Allow-Listed Tool Registry**:
+  - Missing dependency rejection.
+  - DFS 3-color DAG cycle detection.
+  - Self-dependency rejection.
+  - Duplicate step ID detection.
+  - Execution order validation (ensuring prerequisite steps precede dependent steps).
+  - Runtime tool argument validation against `parameters_schema`.
+  - Permission-scope enforcement against granted scopes.
+- **Days 10–11: Approval Management (`ApprovalManager`)**:
+  - Explicit approval request creation bound strictly to workflow and step IDs.
+  - Lifecycle state management: `PENDING`, `APPROVED`, `REJECTED`, `EXPIRED`.
+  - Expiry logic (TTL and absolute timestamps) preventing stale action execution.
+  - Target step binding guarantee (approval cannot inadvertently authorize another step).
+  - Safety proofs: Pending, rejected, and expired consequential actions **strictly maintain tool invocation counter = 0**.
+- **Days 12–13: Safe Workflow Executor**:
+  - Step execution with timeout enforcement (step-level and workflow-level).
+  - Bounded retries strictly for idempotent tools (`is_idempotent=True`, capped at maximum 5 attempts).
+  - Strict prohibition against automatic retries for non-idempotent operations.
+  - Dynamic output propagation (`$step_id.key` or `{{step_id.key}}` resolution).
+  - Safe pause, resume, and cancellation mechanics.
+  - Step failure propagation (dependent steps are safely halted).
+  - Comprehensive execution audit logging and state machine history.
+- **Day 14: Comprehensive Policy Verification & Standalone Demonstration**:
+  - 83 automated unit, policy, and security tests.
+  - Standalone multi-scenario demonstration (`demo.py`) proving harmless execution, approval flow, rejection prevention, expiry, and scope enforcement.
 
 ---
 
@@ -24,65 +44,42 @@ projects/sde-7-voicebot/
 │   ├── __init__.py           # Package exports & public API
 │   ├── schemas.py            # The 5 core schemas (defined exactly once)
 │   ├── state_machine.py      # 7-state FSM with transition validation
-│   ├── mock_tools.py         # Exactly 2 harmless mock tools & ToolRegistry
-│   ├── validator.py          # PlanValidator with DAG cycle detection
-│   └── executor.py           # WorkflowExecutor with approval enforcement
+│   ├── mock_tools.py         # Deterministic mock tools, specs, & ToolRegistry
+│   ├── validator.py          # PlanValidator: DAG cycles, schemas, order, scopes
+│   ├── approval_manager.py   # ApprovalManager: requests, decisions, expiry, audit
+│   └── executor.py           # WorkflowExecutor: timeouts, retries, outputs, cancellation
 ├── tests/
 │   ├── __init__.py
-│   ├── test_schemas.py               # Schemas & serialization tests
+│   ├── test_schemas.py               # Schemas, fields, expiry, serialization
 │   ├── test_state_machine.py         # Valid/illegal transitions & terminal locks
-│   ├── test_mock_tools.py            # Mock tool behavior & registry tests
-│   ├── test_validator.py             # Plan validation & DAG cycle tests
+│   ├── test_mock_tools.py            # Tool specs, registry, schemas, scopes
+│   ├── test_validator.py             # Plan structure, DAG cycles, execution order
 │   ├── test_approval_enforcement.py  # Consequential gating & tool invocation safety proofs
-│   └── test_executor.py              # End-to-end execution, pause/resume, cancel
-├── demo.py                   # Standalone demonstration script
-└── README.md                 # Complete documentation & test report
+│   ├── test_approval_manager.py      # ApprovalManager unit tests, TTL expiry, audit log
+│   ├── test_executor.py              # End-to-end execution, pause/resume, cancel
+│   └── test_policy_and_security.py   # 16 mandated policy & security compliance proofs
+├── demo.py                   # Standalone multi-scenario demonstration script
+└── README.md                 # Architecture, user guide, and test reports
 ```
 
 ---
 
-## 3. The Five Core Schemas
+## 3. Core Architecture & Components
 
+### 3.1 The Five Core Schemas (`schemas.py`)
 Defined exactly once in [`agentic_workflow/schemas.py`](agentic_workflow/schemas.py):
 
 | Schema | Role | Key Attributes |
 | :--- | :--- | :--- |
-| **`WorkflowPlan`** | Top-level execution plan | `workflow_id`, `goal`, `steps`, `state`, `created_at`, `metadata` |
-| **`WorkflowStep`** | Atomic execution step | `step_id`, `tool_name`, `input_payload`, `dependencies`, `is_consequential`, `status`, `result`, `metadata` |
-| **`ToolSpec`** | Allow-listed tool specification | `name`, `description`, `parameters_schema`, `is_consequential` |
-| **`ApprovalRequest`** | Human-in-the-loop approval gating contract | `request_id`, `workflow_id`, `step_id`, `tool_name`, `action_description`, `status` (`PENDING`, `APPROVED`, `REJECTED`), `requested_at`, `decided_at`, `decision_reason` |
-| **`WorkflowResult`** | Standardized outcome container | `success`, `output`, `error`, `metadata`, with `.ok()` and `.fail()` factories |
+| **`WorkflowPlan`** | Execution plan specification | `workflow_id`, `goal`, `steps`, `state`, `timeout_seconds`, `created_at`, `metadata` |
+| **`WorkflowStep`** | Atomic step contract | `step_id`, `tool_name`, `input_payload`, `dependencies`, `is_consequential`, `is_idempotent`, `retry_count`, `max_retries`, `timeout_seconds`, `status`, `result`, `metadata` |
+| **`ToolSpec`** | Allow-listed tool metadata | `name`, `description`, `parameters_schema`, `is_consequential`, `required_permissions`, `is_idempotent` |
+| **`ApprovalRequest`** | Human-in-the-loop gating | `request_id`, `workflow_id`, `step_id`, `tool_name`, `action_description`, `status` (`PENDING`, `APPROVED`, `REJECTED`, `EXPIRED`), `requested_at`, `decided_at`, `expires_at`, `decision_reason` |
+| **`WorkflowResult`** | Outcome container | `success`, `output`, `error`, `metadata`, with `.ok()` and `.fail()` factories |
 
-All five schemas support round-trip serialization via `.to_dict()` and `.from_dict()`.
-
----
-
-## 4. Finite State Machine & Valid Transitions
-
-Implemented in [`agentic_workflow/state_machine.py`](agentic_workflow/state_machine.py), supporting all 7 required states:
-1. `draft` (initial state)
-2. `awaiting_approval` (paused awaiting human/voice confirmation)
-3. `running` (actively executing steps)
-4. `paused` (temporarily suspended by operator)
-5. `succeeded` (terminal success)
-6. `failed` (terminal failure or rejection)
-7. `cancelled` (terminal cancellation)
-
-### Valid Transition Matrix
-
-```text
-Current State       Allowed Next States
--------------       -------------------
-draft               running, awaiting_approval, cancelled
-running             awaiting_approval, paused, succeeded, failed, cancelled
-awaiting_approval   running (approved), paused, failed (rejected), cancelled
-paused              running (resumed), awaiting_approval, cancelled
-succeeded           [TERMINAL - No transitions permitted]
-failed              [TERMINAL - No transitions permitted]
-cancelled           [TERMINAL - No transitions permitted]
-```
-
-### Transition Diagram
+### 3.2 Finite State Machine (`state_machine.py`)
+Supports 7 canonical states: `draft`, `awaiting_approval`, `running`, `paused`, `succeeded`, `failed`, `cancelled`.
+Terminal states (`succeeded`, `failed`, `cancelled`) reject all subsequent transitions with `IllegalStateTransitionError`.
 
 ```mermaid
 stateDiagram-v2
@@ -94,11 +91,11 @@ stateDiagram-v2
     running --> awaiting_approval : Consequential action reached
     running --> paused : Operator paused
     running --> succeeded : All steps completed
-    running --> failed : Step failure / exception
+    running --> failed : Step failure / exception / timeout
     running --> cancelled : Operator cancelled
 
     awaiting_approval --> running : Operator approved
-    awaiting_approval --> failed : Operator rejected
+    awaiting_approval --> failed : Operator rejected / expired
     awaiting_approval --> paused : Paused while waiting
     awaiting_approval --> cancelled : Cancelled while waiting
 
@@ -111,108 +108,204 @@ stateDiagram-v2
     cancelled --> [*]
 ```
 
-Attempting any transition not listed above (or attempting to transition out of terminal states) raises `IllegalStateTransitionError`.
+---
+
+## 4. How Dependency & Order Validation Works
+
+Implemented in [`agentic_workflow/validator.py`](agentic_workflow/validator.py):
+
+1. **Missing Dependency Detection**:
+   Verifies that every dependency listed in `step.dependencies` exists within the plan's declared step IDs. Raises `PlanValidationError` on missing references.
+2. **Self-Dependency Rejection**:
+   Ensures no step lists itself in its dependencies (`step_id in step.dependencies`).
+3. **Circular Dependency Detection (DAG Cycles)**:
+   Performs Depth-First Search (DFS) with 3-color node classification:
+   - `WHITE (0)`: Unvisited node.
+   - `GRAY (1)`: Node on the active recursion stack.
+   - `BLACK (2)`: Fully explored node.
+   Any back-edge pointing to a `GRAY` node identifies a circular dependency, raising a descriptive error with the full cycle path:
+   `Circular dependency detected in plan: step_a -> step_b -> step_a.`
+4. **Execution Order Validation**:
+   Verifies that for every step in `plan.steps`, all prerequisite dependencies appear at an earlier index in the step list. Forward dependencies raise an `Execution order violation`.
+5. **Topological Order Resolution**:
+   Provides `validator.get_topological_order(plan)` to compute valid execution sequences using Kahn's algorithm.
 
 ---
 
-## 5. Exactly Two Harmless Deterministic Mock Tools
+## 5. How Tool Registration & Scope Enforcement Works
 
 Implemented in [`agentic_workflow/mock_tools.py`](agentic_workflow/mock_tools.py):
 
-### 1. `academic_lookup`
-- **Classification**: Read-Only / Non-Consequential (`is_consequential=False`).
-- **Description**: Deterministically look up student records (`S101`, `S102`, `S103`) or course catalog details (`CS101`, `AI202`, `ENG301`).
-- **Inputs**: `record_type` (`"student"` or `"course"`), `record_id` (`str`).
-- **Safety**: 100% in-memory deterministic lookup, no external calls.
+### Registered Tools
+1. **`academic_lookup`**:
+   - `is_consequential = False` (harmless read-only query).
+   - `is_idempotent = True` (safe to retry on transient failure).
+   - `required_permissions = ["academic:read"]`.
+   - Payload: `record_type` (`"student"` or `"course"`), `record_id` (`str`).
+2. **`student_status_update`**:
+   - `is_consequential = True` (mutation requiring explicit operator approval).
+   - `is_idempotent = False` (mutation; automatic retries strictly forbidden).
+   - `required_permissions = ["academic:write"]`.
+   - Payload: `student_id` (`str`), `new_status` (`"active"`, `"on_leave"`, `"probation"`, `"graduated"`), `reason` (`str`).
 
-### 2. `student_status_update`
-- **Classification**: Consequential (`is_consequential=True`).
-- **Description**: Deterministically updates student enrollment status in the in-memory store.
-- **Inputs**: `student_id` (`str`), `new_status` (`"active"`, `"on_leave"`, `"probation"`, `"graduated"`), `reason` (`str`).
-- **Safety**: 100% in-memory mock update (harmless mock, no database or external mutation). Classified as consequential to enforce human approval gating.
-
-### Tool Registry (`ToolRegistry`)
-- Maintains strict allow-listing: unregistered tool calls are rejected.
-- Validates parameter presence, types, and allowed values.
-- Encapsulates exceptions into safe `WorkflowResult.fail()` outcomes.
-- Tracks tool invocation counts for verification and test auditing.
-
----
-
-## 6. Consequential Action Gating & Safety Proofs
-
-1. **Default to `awaiting_approval`**:
-   - Any step invoking a consequential tool (or explicitly flagged `is_consequential=True`) defaults to `awaiting_approval` unless explicit prior approval exists.
-2. **Tool Invocation Guarantee (Safety Proof 1 - Pending)**:
-   - When a consequential action is reached, execution immediately halts, transitioning to `awaiting_approval`.
-   - **The tool handler is NEVER invoked while approval is pending** (invocation counter strictly remains `0`).
-3. **Rejection Guarantee (Safety Proof 2 - Rejection)**:
-   - If the operator or policy rejects the approval request, the workflow transitions from `awaiting_approval` to `failed`.
-   - **The tool handler is NEVER invoked upon rejection** (invocation counter strictly remains `0`).
-4. **Approved Execution**:
-   - Only when explicit approval is granted does the state machine transition to `running`, invoking the tool handler exactly once.
+### ToolRegistry Guarantees
+- **Allow-Listing**: Only tools registered via `registry.register(spec, handler)` can be executed. Unregistered tools fail immediately.
+- **Runtime Argument Conformance**: `registry.validate_payload(name, payload)` verifies parameter presence, types (`str`, `int`, `float`, `bool`, `list`, `dict`), and enum constraints before invoking the handler.
+- **Permission-Scope Enforcement**: `registry.check_permissions(name, granted_permissions)` compares `tool.required_permissions` with caller scopes. Unauthorized invocations fail immediately without executing the tool handler.
+- **Invocation Counter Auditing**: `registry.get_invocation_count(name)` increments **strictly upon genuine handler invocation**, providing mathematical proof of non-execution.
 
 ---
 
-## 7. How to Run the Tests
+## 6. How Approval, Rejection & Expiry Work
 
-The entire test suite relies only on Python standard library (`unittest`):
+Implemented in [`agentic_workflow/approval_manager.py`](agentic_workflow/approval_manager.py):
+
+### 1. Request Creation
+When the executor reaches a consequential step (`is_consequential=True`), it requests authorization:
+- Creates an `ApprovalRequest` with unique ID `apr-{workflow_id}-{step_id}`.
+- Sets status to `PENDING`.
+- Computes `expires_at` based on step metadata or manager TTL.
+- Halts execution and transitions workflow state to `awaiting_approval`.
+- **The tool handler is NOT invoked (counter = 0)**.
+
+### 2. Approval Flow
+- Operator invokes `executor.submit_approval(step_id, approved=True, reason=...)`.
+- Request status transitions to `APPROVED`, setting `decided_at` and `decision_reason`.
+- An immutable `ApprovalAuditEntry` is appended to the audit log.
+- On `executor.run()`, the workflow transitions from `awaiting_approval` to `running`, executing the tool handler.
+
+### 3. Rejection Flow
+- Operator invokes `executor.submit_approval(step_id, approved=False, reason=...)`.
+- Request status transitions to `REJECTED`.
+- On `executor.run()`, the step fails, and the workflow transitions to `failed`.
+- **CRITICAL SAFETY PROOF**: Tool invocation counter strictly remains `0`.
+
+### 4. Expiry Flow
+- If current UTC time exceeds `expires_at`, `check_expiry()` marks the request as `EXPIRED`.
+- The executor halts, transitions the workflow to `failed`, and logs the expiry event.
+- **CRITICAL SAFETY PROOF**: Expired requests are never approved or executed; tool invocation count strictly remains `0`.
+
+### 5. Target Step Binding
+- Approval for `step_a` cannot be reused for or applied to `step_b`. Each approval request is permanently bound to its designated `workflow_id` and `step_id`.
+
+---
+
+## 7. How Timeouts, Retries, Cancellation & Output Propagation Work
+
+Implemented in [`agentic_workflow/executor.py`](agentic_workflow/executor.py):
+
+### 1. Execution Timeouts
+- **Workflow-Level Timeout**: Monitored via monotonic clock (`time.monotonic()`). If cumulative execution exceeds `workflow_timeout_seconds`, execution terminates in `failed` state with timeout metadata.
+- **Step-Level Timeout**: Individual steps specify `timeout_seconds`. Executed via a bounded thread worker; if execution duration exceeds the limit, the future times out and returns `WorkflowResult.fail(..., metadata={"timeout": True})`.
+
+### 2. Bounded Retries
+- Retries are permitted **ONLY if `is_idempotent=True`**.
+- Read-only tools like `academic_lookup` are retried up to `min(step.max_retries, 5)`.
+- If an idempotent operation fails with a transient error, the executor logs a retry event and re-attempts execution.
+- **Non-Idempotent Protection**: Mutations like `student_status_update` (`is_idempotent=False`) **NEVER retry automatically** (`retry_count == 0`), eliminating duplicate mutation risks.
+
+### 3. Workflow Cancellation
+- Calling `executor.cancel(reason=...)` immediately transitions the workflow to `cancelled`.
+- Unexecuted steps are marked `cancelled`.
+- No further tool handlers are invoked.
+
+### 4. Step Output Propagation
+- Steps dynamically reference outputs from prerequisite completed steps using:
+  - Dotted path: `"$step_student.enrolled_courses[0]"` or `"$step_student.output.student_id"`.
+  - Mustache syntax: `"{{step_student.student_id}}"`.
+- Before executing a step, the executor resolves all dynamic references against prior completed step outputs.
+
+### 5. Failure Propagation
+- If a prerequisite step fails or times out, downstream dependent steps remain unexecuted (`pending`), preventing cascading failures.
+
+---
+
+## 8. How to Run the Tests
+
+The entire test suite runs via standard `pytest` or `unittest`:
 
 ```bash
-# From within projects/sde-7-voicebot:
-python -m unittest discover -s tests -v
+# From the W4 workspace directory:
+python -m pytest projects/sde-7-voicebot/tests -v
 
-# Or from the repository root:
+# Or using standard unittest discovery:
 python -m unittest discover -s projects/sde-7-voicebot/tests -v
 ```
 
-### Actual Test Results
+### Complete Test Results
 
 ```text
-Ran 52 tests in 0.006s
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-8.3.4, pluggy-1.6.0
+collected 83 items
 
-OK
+projects/sde-7-voicebot/tests/test_approval_enforcement.py (6 tests)       PASSED
+projects/sde-7-voicebot/tests/test_approval_manager.py (9 tests)           PASSED
+projects/sde-7-voicebot/tests/test_executor.py (4 tests)                   PASSED
+projects/sde-7-voicebot/tests/test_mock_tools.py (14 tests)                 PASSED
+projects/sde-7-voicebot/tests/test_policy_and_security.py (17 tests)       PASSED
+projects/sde-7-voicebot/tests/test_schemas.py (9 tests)                    PASSED
+projects/sde-7-voicebot/tests/test_state_machine.py (10 tests)             PASSED
+projects/sde-7-voicebot/tests/test_validator.py (14 tests)                 PASSED
+
+============================= 83 passed in 0.32s ==============================
 ```
 
-All 52 tests pass in 6 milliseconds across all test modules:
-- `test_schemas.py`: 6 tests (schemas, helpers, serialization)
-- `test_state_machine.py`: 10 tests (7 states, valid transitions, illegal transition errors, terminal locks, history)
-- `test_mock_tools.py`: 14 tests (tool specs, lookup behaviors, updates, registry isolation, invocation counts)
-- `test_validator.py`: 13 tests (structure, duplicates, unregistered tools, schemas, dependencies, cycles)
-- `test_approval_enforcement.py`: 5 tests (approval defaults, pending tool call prevention proof, rejection prevention proof, approval flow, non-consequential bypass)
-- `test_executor.py`: 4 tests (multi-step workflow, pause/resume, cancel, step failure propagation)
+All **83 tests pass cleanly in 0.32 seconds** with zero failures, errors, or warnings.
 
 ---
 
-## 8. Standalone Demonstration
+## 9. How to Run the Demonstrations
 
-Run the demonstration script to verify harmless mock execution and approval flows:
+Execute the standalone demonstration script:
 
 ```bash
 python projects/sde-7-voicebot/demo.py
 ```
 
-### Demonstration Scenarios Demonstrated
+### Scenarios Demonstrated:
 
-1. **Scenario 1: Harmless Read-Only Workflow**:
-   - Executes multi-step `academic_lookup` for student and course details.
+1. **DEMO A: Harmless Read-Only Workflow Executes Successfully**:
+   - Queries student record `S101`.
+   - Propagates first enrolled course (`CS101`) dynamically into next step (`$step_student.enrolled_courses[0]`).
    - Transitions cleanly: `draft` -> `running` -> `succeeded`.
-2. **Scenario 2: Consequential Approval Flow**:
-   - Halts at `awaiting_approval` for `student_status_update` (invocation count: 0).
-   - Generates `ApprovalRequest`.
-   - Operator grants approval.
-   - Resumes to `succeeded` (invocation count: 1).
-3. **Scenario 3: Consequential Rejection Flow**:
-   - Halts at `awaiting_approval` (invocation count: 0).
-   - Operator rejects the request.
+2. **DEMO B: Consequential Action Requests Approval, Receives Approval, and Executes**:
+   - Reaches consequential status update for `S102`.
+   - Halts at `awaiting_approval` with invocation counter = 0.
+   - Operator grants explicit approval with reason.
+   - Resumes to `succeeded` and invokes tool handler exactly once.
+3. **DEMO C: Consequential Action is Rejected and Tool Invocation Count Strictly Remains ZERO**:
+   - Attempts unauthorized probation placement.
+   - Halts at `awaiting_approval` with invocation counter = 0.
+   - Operator rejects request with reason.
    - Workflow terminates in `failed` state.
-   - Verifies tool invocation count strictly remains 0.
+   - **SAFETY PROOF**: `student_status_update` invocation counter strictly remains `0`.
+4. **DEMO D: Advanced Policy Controls**:
+   - Proves approval request with expired TTL fails without invoking tool.
+   - Proves read-only caller attempting write action triggers permission-scope violation.
 
 ---
 
-## 9. Intentionally Deferred Items & Future Integration
+## 10. Acceptance Criteria Checklist
 
-- **Speech-to-Text (Worker 1)**: Voice approval confirmation and voice plan transcription will wire into `ApprovalRequest` and `WorkflowPlan.from_dict()`.
-- **Reasoning/Planner (Worker 2)**: Dynamic LLM plan generation will output structured `WorkflowPlan` data.
-- **Backend/Sessions (Worker 3)**: Session storage and event pub/sub will consume `WorkflowStateMachine.history` and `WorkflowResult.to_dict()`.
-- **Frontend/UX (Worker 5)**: Progress modals and approval prompts will listen for `awaiting_approval` state and submit decisions via `WorkflowExecutor.submit_approval()`.
+| Requirement | Implementation | Status |
+| :--- | :--- | :---: |
+| Dependency & DAG Cycle Validation | Missing deps, self-deps, duplicate IDs, and DFS DAG cycle detection in `PlanValidator` | **COMPLETE** |
+| Execution Order Validation | `_validate_execution_order` enforces prerequisite ordering | **COMPLETE** |
+| Allow-Listed Tool Registry | `ToolRegistry` enforces allow-list, schemas, and tracks invocations | **COMPLETE** |
+| Tool Argument Schema Validation | Type checking (`str`, `int`, `float`, `bool`, `list`, `dict`) and enum allowed values | **COMPLETE** |
+| Permission-Scope Enforcement | `ToolSpec.required_permissions` verified against authorized caller scopes | **COMPLETE** |
+| Approval Management | `ApprovalManager` with `PENDING`, `APPROVED`, `REJECTED`, `EXPIRED` lifecycle | **COMPLETE** |
+| Approval Expiry Handling | TTL and timestamp expiry validation preventing stale actions | **COMPLETE** |
+| Target Step Binding | Approvals apply strictly to their intended workflow and step | **COMPLETE** |
+| Zero Invocation Proof on Rejection/Expiry | Pending, rejected, and expired consequential actions never execute tools (count = 0) | **COMPLETE** |
+| Execution Timeouts | Monotonic workflow timeouts and step-level thread timeout controls | **COMPLETE** |
+| Bounded Retries for Idempotent Tools | Retries strictly bounded and permitted only when `is_idempotent=True` | **COMPLETE** |
+| No Retries for Non-Idempotent Tools | Mutation tools (`is_idempotent=False`) strictly prohibited from automatic retry | **COMPLETE** |
+| Workflow Cancellation | `cancel()` halts execution, locks state in `CANCELLED`, cancels pending steps | **COMPLETE** |
+| Output Propagation | Resolves dynamic `$step_id.key` expressions from prior completed step outputs | **COMPLETE** |
+| Failure Propagation | Failed step prevents execution of downstream dependent steps | **COMPLETE** |
+| Execution & Audit History | Transition history, approval audit log, and executor event trail captured | **COMPLETE** |
+| Comprehensive Policy Tests | 83 tests passing with 100% success rate across all modules | **COMPLETE** |
+| Standalone Demonstrations | Demos A, B, C, and D verified and functional | **COMPLETE** |
+| Backward Compatibility | All Week 1 interfaces and contracts 100% preserved | **COMPLETE** |

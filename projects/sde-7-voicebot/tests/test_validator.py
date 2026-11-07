@@ -206,5 +206,47 @@ class TestPlanValidator(unittest.TestCase):
         self.assertIn("Circular dependency detected", str(ctx.exception))
 
 
+    def test_execution_order_violation(self):
+        """Verify plan fails if a step appears before its prerequisite dependency in execution order."""
+        plan = WorkflowPlan(
+            workflow_id="wf-order-violation",
+            goal="Test execution order",
+            steps=[
+                WorkflowStep(
+                    step_id="step_second",
+                    tool_name="academic_lookup",
+                    input_payload={"record_type": "course", "record_id": "CS101"},
+                    dependencies=["step_first"],
+                ),
+                WorkflowStep(
+                    step_id="step_first",
+                    tool_name="academic_lookup",
+                    input_payload={"record_type": "student", "record_id": "S101"},
+                    dependencies=[],
+                ),
+            ],
+        )
+        with self.assertRaises(PlanValidationError) as ctx:
+            self.validator.validate(plan)
+        self.assertIn("Execution order violation", str(ctx.exception))
+
+    def test_permission_scope_violation_in_validator(self):
+        """Verify plan fails during validation if authorized scopes do not satisfy tool requirements."""
+        plan = WorkflowPlan(
+            workflow_id="wf-perm-violation",
+            goal="Test permission scope validation",
+            steps=[
+                WorkflowStep(
+                    step_id="step_write",
+                    tool_name="student_status_update",
+                    input_payload={"student_id": "S101", "new_status": "active", "reason": "Review"},
+                ),
+            ],
+        )
+        with self.assertRaises(PlanValidationError) as ctx:
+            self.validator.validate(plan, authorized_permissions={"academic:read"})
+        self.assertIn("Permission-scope violation", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

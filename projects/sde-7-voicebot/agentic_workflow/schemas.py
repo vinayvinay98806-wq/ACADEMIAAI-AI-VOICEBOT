@@ -78,12 +78,15 @@ class WorkflowResult:
 class ToolSpec:
     """
     Metadata specification for allow-listed tools.
-    Specifies tool identifier, human description, input schema, and consequentiality flag.
+    Specifies tool identifier, human description, input schema, consequentiality flag,
+    required permission scopes, and idempotency flag.
     """
     name: str
     description: str
     parameters_schema: Dict[str, Any] = field(default_factory=dict)
     is_consequential: bool = False
+    required_permissions: List[str] = field(default_factory=list)
+    is_idempotent: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert specification to dictionary."""
@@ -92,6 +95,8 @@ class ToolSpec:
             "description": self.description,
             "parameters_schema": dict(self.parameters_schema),
             "is_consequential": self.is_consequential,
+            "required_permissions": list(self.required_permissions),
+            "is_idempotent": self.is_idempotent,
         }
 
     @classmethod
@@ -102,6 +107,8 @@ class ToolSpec:
             description=str(data.get("description", "")),
             parameters_schema=dict(data.get("parameters_schema", {})),
             is_consequential=bool(data.get("is_consequential", False)),
+            required_permissions=list(data.get("required_permissions", [])),
+            is_idempotent=bool(data.get("is_idempotent", False)),
         )
 
 
@@ -109,20 +116,23 @@ class ToolSpec:
 class ApprovalRequest:
     """
     Contract representing human-in-the-loop approval gating for consequential actions.
-    Explicitly tracks request status (PENDING, APPROVED, REJECTED) and audit metadata.
+    Explicitly tracks request status (PENDING, APPROVED, REJECTED, EXPIRED) and audit metadata.
     """
     request_id: str
     workflow_id: str
     step_id: str
     tool_name: str
     action_description: str
-    status: str = "PENDING"  # PENDING, APPROVED, REJECTED
+    status: str = "PENDING"  # PENDING, APPROVED, REJECTED, EXPIRED
     requested_at: str = field(default_factory=_get_utc_now_iso)
     decided_at: Optional[str] = None
     decision_reason: Optional[str] = None
+    expires_at: Optional[str] = None
 
     def approve(self, reason: Optional[str] = None) -> None:
         """Grant explicit approval for consequential action."""
+        if self.status == "EXPIRED":
+            raise ValueError(f"Cannot approve expired request '{self.request_id}'.")
         if self.status != "PENDING":
             raise ValueError(f"Cannot approve request with status '{self.status}'. Must be PENDING.")
         self.status = "APPROVED"
@@ -131,11 +141,30 @@ class ApprovalRequest:
 
     def reject(self, reason: Optional[str] = None) -> None:
         """Reject consequential action, preventing execution."""
+        if self.status == "EXPIRED":
+            raise ValueError(f"Cannot reject expired request '{self.request_id}'.")
         if self.status != "PENDING":
             raise ValueError(f"Cannot reject request with status '{self.status}'. Must be PENDING.")
         self.status = "REJECTED"
         self.decided_at = _get_utc_now_iso()
         self.decision_reason = reason or "Rejected by operator"
+
+    def expire(self, reason: Optional[str] = None) -> None:
+        """Expire approval request, permanently preventing execution."""
+        if self.status != "PENDING":
+            raise ValueError(f"Cannot expire request with status '{self.status}'. Must be PENDING.")
+        self.status = "EXPIRED"
+        self.decided_at = _get_utc_now_iso()
+        self.decision_reason = reason or "Approval request expired without operator decision"
+
+    def check_expiry(self, now_iso: Optional[str] = None) -> bool:
+        """Check if request has expired based on expires_at timestamp; auto-transition if past expiry."""
+        if self.status == "PENDING" and self.expires_at:
+            current = now_iso or _get_utc_now_iso()
+            if current >= self.expires_at:
+                self.expire(reason=f"Approval request expired at {self.expires_at}")
+                return True
+        return self.status == "EXPIRED"
 
     def is_approved(self) -> bool:
         """Check if approved."""
@@ -149,6 +178,10 @@ class ApprovalRequest:
         """Check if still pending approval."""
         return self.status == "PENDING"
 
+    def is_expired(self) -> bool:
+        """Check if request has expired."""
+        return self.status == "EXPIRED"
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert approval request to dictionary."""
         return {
@@ -161,6 +194,7 @@ class ApprovalRequest:
             "requested_at": self.requested_at,
             "decided_at": self.decided_at,
             "decision_reason": self.decision_reason,
+            "expires_at": self.expires_at,
         }
 
     @classmethod
@@ -176,6 +210,7 @@ class ApprovalRequest:
             requested_at=str(data.get("requested_at", _get_utc_now_iso())),
             decided_at=data.get("decided_at"),
             decision_reason=data.get("decision_reason"),
+            expires_at=data.get("expires_at"),
         )
 
 
@@ -183,7 +218,8 @@ class ApprovalRequest:
 class WorkflowStep:
     """
     Contract representing an atomic unit of execution in a workflow.
-    Specifies step identification, tool target, inputs, dependencies, and execution state.
+    Specifies step identification, tool target, inputs, dependencies, execution state,
+    retries, timeouts, and idempotency override.
     """
     step_id: str
     tool_name: str
@@ -193,6 +229,10 @@ class WorkflowStep:
     status: str = "pending"  # pending, awaiting_approval, running, completed, failed, skipped
     result: Optional[WorkflowResult] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    retry_count: int = 0
+    max_retries: int = 0
+    timeout_seconds: Optional[float] = None
+    is_idempotent: Optional[bool] = None  # None: inherit idempotency from ToolSpec
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow step to dictionary."""
@@ -205,6 +245,10 @@ class WorkflowStep:
             "status": self.status,
             "result": self.result.to_dict() if self.result else None,
             "metadata": dict(self.metadata),
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "timeout_seconds": self.timeout_seconds,
+            "is_idempotent": self.is_idempotent,
         }
 
     @classmethod
@@ -221,6 +265,10 @@ class WorkflowStep:
             status=str(data.get("status", "pending")),
             result=res,
             metadata=dict(data.get("metadata", {})),
+            retry_count=int(data.get("retry_count", 0)),
+            max_retries=int(data.get("max_retries", 0)),
+            timeout_seconds=data.get("timeout_seconds"),
+            is_idempotent=data.get("is_idempotent"),
         )
 
 
@@ -236,6 +284,7 @@ class WorkflowPlan:
     state: str = "draft"
     created_at: str = field(default_factory=_get_utc_now_iso)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    timeout_seconds: Optional[float] = None
 
     def get_step(self, step_id: str) -> Optional[WorkflowStep]:
         """Lookup a step by step_id."""
@@ -257,6 +306,7 @@ class WorkflowPlan:
             "state": self.state,
             "created_at": self.created_at,
             "metadata": dict(self.metadata),
+            "timeout_seconds": self.timeout_seconds,
         }
 
     @classmethod
@@ -269,4 +319,5 @@ class WorkflowPlan:
             state=str(data.get("state", "draft")),
             created_at=str(data.get("created_at", _get_utc_now_iso())),
             metadata=dict(data.get("metadata", {})),
+            timeout_seconds=data.get("timeout_seconds"),
         )
