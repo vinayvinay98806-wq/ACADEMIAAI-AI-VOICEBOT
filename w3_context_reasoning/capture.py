@@ -19,6 +19,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+from .clock import (
+    get_current_timestamp,
+    get_current_time,
+    DEFAULT_FIXTURE_TIMESTAMP,
+    is_time_frozen,
+)
 
 
 class CaptureError(Exception):
@@ -188,7 +194,14 @@ class CaptureAdapter(ABC):
         self.config.consent_granted = granted
 
     @abstractmethod
-    def capture(self, active_window: Optional[str] = None) -> CapturedFrame:
+    def capture(
+        self,
+        active_window: Optional[str] = None,
+        scenario: str = "binary_search_tree",
+        current_time_override: Optional[float] = None,
+        timestamp_override: Optional[str] = None,
+        frame_id_override: Optional[str] = None,
+    ) -> CapturedFrame:
         """Captures a frame if consent and constraints are satisfied."""
         pass
 
@@ -203,12 +216,15 @@ class SyntheticCaptureAdapter(CaptureAdapter):
         self,
         config: Optional[CaptureConfig] = None,
         validator: Optional[CaptureValidator] = None,
+        deterministic: bool = True,
     ):
         super().__init__(config=config)
         self.validator = validator or CaptureValidator()
+        self.deterministic = deterministic
         self._last_capture_time: Optional[float] = None
         self._preconfigured_scenarios: Dict[str, Dict[str, Any]] = {
             "binary_search_tree": {
+                "frame_id": "SYNTH-FRAME-BST-001",
                 "window": "PDF Viewer - Lecture 7: Tree Structures.pdf",
                 "content": (
                     "SLIDE 14: Binary Search Trees (BST)\n"
@@ -220,6 +236,7 @@ class SyntheticCaptureAdapter(CaptureAdapter):
                 "height": 720,
             },
             "recursion_debug": {
+                "frame_id": "SYNTH-FRAME-CODE-002",
                 "window": "VS Code - recursion_exercise.py",
                 "content": (
                     "def factorial(n):\n"
@@ -231,6 +248,7 @@ class SyntheticCaptureAdapter(CaptureAdapter):
                 "height": 720,
             },
             "course_syllabus": {
+                "frame_id": "SYNTH-FRAME-SYL-003",
                 "window": "Browser - Course Outline: CS201 Data Structures",
                 "content": (
                     "Unit 3: Balanced Trees and Heaps.\n"
@@ -249,9 +267,11 @@ class SyntheticCaptureAdapter(CaptureAdapter):
         content: str,
         width: int = 1280,
         height: int = 720,
+        frame_id: Optional[str] = None,
     ) -> None:
         """Registers a custom synthetic screen scenario for testing."""
         self._preconfigured_scenarios[name] = {
+            "frame_id": frame_id or f"SYNTH-FRAME-{name.upper()[:4]}-001",
             "window": active_window,
             "content": content,
             "width": width,
@@ -263,6 +283,8 @@ class SyntheticCaptureAdapter(CaptureAdapter):
         active_window: Optional[str] = None,
         scenario: str = "binary_search_tree",
         current_time_override: Optional[float] = None,
+        timestamp_override: Optional[str] = None,
+        frame_id_override: Optional[str] = None,
     ) -> CapturedFrame:
         """
         Captures a synthetic frame.
@@ -274,7 +296,13 @@ class SyntheticCaptureAdapter(CaptureAdapter):
         self.validator.validate_consent(self.config)
 
         # 2. Enforce sampling interval check
-        now = time.time() if current_time_override is None else current_time_override
+        if current_time_override is not None:
+            now = current_time_override
+        elif is_time_frozen():
+            now = get_current_time().timestamp()
+        else:
+            now = time.time()
+
         self.validator.validate_sampling_interval(self._last_capture_time, now, self.config)
 
         # 3. Retrieve scenario data
@@ -284,11 +312,27 @@ class SyntheticCaptureAdapter(CaptureAdapter):
         )
 
         window_title = active_window or scene["window"]
-        frame_id = f"SYNTH-FRAME-{uuid.uuid4().hex[:8].upper()}"
+        if frame_id_override:
+            frame_id = frame_id_override
+        elif self.deterministic:
+            frame_id = scene.get("frame_id", f"SYNTH-FRAME-{scenario.upper()[:4]}-001")
+        else:
+            frame_id = f"SYNTH-FRAME-{uuid.uuid4().hex[:8].upper()}"
+
+        if timestamp_override:
+            frame_ts = timestamp_override
+        elif current_time_override is not None:
+            frame_ts = datetime.fromtimestamp(current_time_override, tz=timezone.utc).isoformat()
+        elif is_time_frozen():
+            frame_ts = get_current_timestamp()
+        elif self.deterministic:
+            frame_ts = DEFAULT_FIXTURE_TIMESTAMP
+        else:
+            frame_ts = get_current_timestamp()
 
         frame = CapturedFrame(
             frame_id=frame_id,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=frame_ts,
             width=scene.get("width", 1280),
             height=scene.get("height", 720),
             format="rgb_synthetic",

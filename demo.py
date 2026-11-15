@@ -42,6 +42,7 @@ from w3_context_reasoning import (
     create_sample_reasoning_request,
     create_sample_context_items,
     create_sample_source_references,
+    get_current_time,
 )
 
 
@@ -109,7 +110,7 @@ def run_demonstration():
     # SCENARIO 4: Context selection based on relevance and recency
     # ======================================================================
     print_banner("SCENARIO 4: Context Selection Based on Relevance and Recency")
-    now = datetime.now(timezone.utc)
+    now = get_current_time()
     recent_ts = (now - timedelta(minutes=5)).isoformat()
     older_ts = (now - timedelta(minutes=50)).isoformat()
     stale_ts = (now - timedelta(hours=4)).isoformat()

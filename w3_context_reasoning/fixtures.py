@@ -8,7 +8,6 @@ webcam, audio recording, or student PII is collected or processed.
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from .schemas import (
@@ -17,6 +16,7 @@ from .schemas import (
     SourceReference,
     ReasoningRequest,
 )
+from .clock import get_current_timestamp, DEFAULT_FIXTURE_TIMESTAMP, is_time_frozen
 
 # Predefined synthetic slide and screen scenarios
 SYNTHETIC_SCREENS: Dict[str, Dict[str, str]] = {
@@ -55,6 +55,7 @@ SYNTHETIC_SCREENS: Dict[str, Dict[str, str]] = {
 def create_synthetic_screen_context(
     scenario: str = "binary_search_tree",
     capture_enabled: bool = False,
+    timestamp: Optional[str] = None,
 ) -> ScreenContext:
     """
     Creates a synthetic ScreenContext for safe offline testing and demonstration.
@@ -63,10 +64,11 @@ def create_synthetic_screen_context(
     capture_enabled defaults to False. real screenshots are NEVER taken.
     """
     scene = SYNTHETIC_SCREENS.get(scenario, SYNTHETIC_SCREENS["binary_search_tree"])
+    ts = timestamp or (get_current_timestamp() if is_time_frozen() else DEFAULT_FIXTURE_TIMESTAMP)
     return ScreenContext(
         capture_enabled=capture_enabled,
         frame_id=scene["frame_id"],
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=ts,
         ocr_extracted_text=scene["ocr_text"],
         active_window_title=scene["active_window"],
         synthetic=True,
@@ -74,15 +76,15 @@ def create_synthetic_screen_context(
     )
 
 
-def create_sample_context_items() -> List[ContextItem]:
+def create_sample_context_items(timestamp: Optional[str] = None) -> List[ContextItem]:
     """Generates synthetic contextual items representing past dialogue and student state."""
-    now = datetime.now(timezone.utc).isoformat()
+    ts = timestamp or (get_current_timestamp() if is_time_frozen() else DEFAULT_FIXTURE_TIMESTAMP)
     return [
         ContextItem(
             item_id="CTX-001",
             category="student_profile",
             content="Student enrolled in 3rd Semester CS, taking Data Structures and Algorithms.",
-            timestamp=now,
+            timestamp=ts,
             metadata={"semester": 3, "major": "Computer Science"},
             untrusted=True,
         ),
@@ -90,7 +92,7 @@ def create_sample_context_items() -> List[ContextItem]:
             item_id="CTX-002",
             category="conversation_history",
             content="User previously asked about binary tree traversals (inorder, preorder).",
-            timestamp=now,
+            timestamp=ts,
             metadata={"turn": 1},
             untrusted=True,
         ),
@@ -138,14 +140,17 @@ def create_sample_reasoning_request(
     query: str = "What is the key property of a binary search tree?",
     scenario: str = "binary_search_tree",
     prompt_version: str = "v1",
+    request_id: Optional[str] = None,
+    timestamp: Optional[str] = None,
 ) -> ReasoningRequest:
     """Helper to construct a fully populated ReasoningRequest for tests and demos."""
+    req_id = request_id or "REQ-DEMO-001"
     return ReasoningRequest(
-        request_id=f"REQ-{uuid.uuid4().hex[:8]}",
+        request_id=req_id,
         session_id="SESS-DEMO-001",
         user_query=query,
-        screen_context=create_synthetic_screen_context(scenario=scenario),
-        context_items=create_sample_context_items(),
+        screen_context=create_synthetic_screen_context(scenario=scenario, timestamp=timestamp),
+        context_items=create_sample_context_items(timestamp=timestamp),
         source_references=create_sample_source_references(),
         prompt_version=prompt_version,
         parameters={"temperature": 0.0, "mock_mode": True},

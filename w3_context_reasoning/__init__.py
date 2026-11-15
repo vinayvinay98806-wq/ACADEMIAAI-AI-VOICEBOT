@@ -69,6 +69,16 @@ from .llm_adapter import (
     MaxRetriesExceededError,
 )
 from .pipeline import ContextReasoningPipeline
+from .clock import (
+    TimeProvider,
+    get_current_time,
+    get_current_timestamp,
+    freeze_time,
+    unfreeze_time,
+    is_time_frozen,
+    frozen_time_context,
+    DEFAULT_FIXTURE_TIMESTAMP,
+)
 
 __all__ = [
     # Schemas
@@ -129,4 +139,13 @@ __all__ = [
     "MaxRetriesExceededError",
     # Pipeline (Week 2)
     "ContextReasoningPipeline",
+    # Clock & Determinism
+    "TimeProvider",
+    "get_current_time",
+    "get_current_timestamp",
+    "freeze_time",
+    "unfreeze_time",
+    "is_time_frozen",
+    "frozen_time_context",
+    "DEFAULT_FIXTURE_TIMESTAMP",
 ]

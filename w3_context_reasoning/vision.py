@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from .schemas import ScreenContext
 from .capture import CapturedFrame
+from .clock import get_current_timestamp
 
 
 class VisionError(Exception):
@@ -44,7 +45,7 @@ class OCRResult:
     active_window: Optional[str] = None
     lines: List[str] = field(default_factory=list)
     detected_language: str = "en"
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=get_current_timestamp)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -59,7 +60,7 @@ class OCRResult:
             active_window=data.get("active_window"),
             lines=list(data.get("lines", [])),
             detected_language=data.get("detected_language", "en"),
-            timestamp=data.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+            timestamp=data.get("timestamp") or get_current_timestamp(),
             metadata=dict(data.get("metadata", {})),
         )
 
@@ -138,6 +139,8 @@ class MockOCRVisionAdapter(OCRVisionAdapter):
 
         cleaned_text = raw_text.strip()
 
+        frame_ts = frame.timestamp or get_current_timestamp()
+
         if not cleaned_text:
             # Handle empty frame safely with 0 confidence
             return OCRResult(
@@ -147,6 +150,7 @@ class MockOCRVisionAdapter(OCRVisionAdapter):
                 active_window=frame.active_window,
                 lines=[],
                 detected_language="en",
+                timestamp=frame_ts,
                 metadata={"ocr_engine": "MockOCRVisionAdapter", "empty_frame": True},
             )
 
@@ -168,6 +172,7 @@ class MockOCRVisionAdapter(OCRVisionAdapter):
             active_window=frame.active_window,
             lines=lines,
             detected_language="en",
+            timestamp=frame_ts,
             metadata={
                 "ocr_engine": "MockOCRVisionAdapter",
                 "character_count": len(cleaned_text),

@@ -7,12 +7,12 @@ grounded in provided context items and source references without external API ca
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Set, Tuple
 from .schemas import ReasoningRequest, ReasoningResult, SourceReference
 from .validation import validate_request, validate_result
 from .prompts.manager import PromptManager
+from .clock import get_current_timestamp, is_time_frozen
 
 
 STOPWORDS = {
@@ -78,7 +78,7 @@ class DeterministicMockReasoningEngine:
         scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [item[2] for item in scored_matches]
 
-    def reason(self, request: ReasoningRequest) -> ReasoningResult:
+    def reason(self, request: ReasoningRequest, timestamp: Optional[str] = None) -> ReasoningResult:
         """
         Executes deterministic reasoning for a given request.
 
@@ -175,6 +175,17 @@ class DeterministicMockReasoningEngine:
 
         result_id = f"RES-{request.request_id.replace('REQ-', '')}"
 
+        # Resolve deterministic timestamp
+        result_timestamp = (
+            timestamp
+            or request.parameters.get("timestamp")
+            or (get_current_timestamp() if is_time_frozen() else (
+                request.screen_context.timestamp
+                if request.screen_context and request.screen_context.timestamp
+                else get_current_timestamp()
+            ))
+        )
+
         result = ReasoningResult(
             result_id=result_id,
             request_id=request.request_id,
@@ -185,7 +196,7 @@ class DeterministicMockReasoningEngine:
             intent=intent,
             reasoning_steps=reasoning_steps,
             prompt_version=rendered_prompt.version,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=result_timestamp,
         )
 
         # 6. Strict output validation before returning

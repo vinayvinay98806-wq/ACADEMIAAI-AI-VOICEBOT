@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from .clock import get_current_timestamp
 
 
 @dataclass
@@ -50,7 +51,7 @@ class ContextItem:
     item_id: str
     content: str
     category: str = "conversation_history"  # e.g., conversation_history, student_profile, active_task
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=get_current_timestamp)
     metadata: Dict[str, Any] = field(default_factory=dict)
     untrusted: bool = True  # Untrusted by default to require structural isolation in prompts
 
@@ -63,7 +64,7 @@ class ContextItem:
             item_id=data.get("item_id", ""),
             content=data.get("content", ""),
             category=data.get("category", "conversation_history"),
-            timestamp=data.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+            timestamp=data.get("timestamp") or get_current_timestamp(),
             metadata=dict(data.get("metadata", {})),
             untrusted=bool(data.get("untrusted", True)),
         )
@@ -166,7 +167,7 @@ class ReasoningResult:
     intent: str = "general_qa"  # e.g., explain_concept, debug_code, summarize_slide, clarification
     reasoning_steps: List[str] = field(default_factory=list)
     prompt_version: str = "v1"
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=get_current_timestamp)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -183,5 +184,5 @@ class ReasoningResult:
             intent=data.get("intent", "general_qa"),
             reasoning_steps=list(data.get("reasoning_steps", [])),
             prompt_version=data.get("prompt_version", "v1"),
-            created_at=data.get("created_at") or datetime.now(timezone.utc).isoformat(),
+            created_at=data.get("created_at") or get_current_timestamp(),
         )

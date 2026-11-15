@@ -22,10 +22,10 @@ Final Response
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from .clock import get_current_timestamp, is_time_frozen
 
 from .schemas import (
     ReasoningRequest,
@@ -231,6 +231,15 @@ class ContextReasoningPipeline:
             if not self.safe_fallback_on_error:
                 raise
 
+            fallback_ts = (
+                request.parameters.get("timestamp")
+                or (get_current_timestamp() if is_time_frozen() else (
+                    request.screen_context.timestamp
+                    if request.screen_context and request.screen_context.timestamp
+                    else get_current_timestamp()
+                ))
+            )
+
             # Graceful fallback response when LLM or validation fails in safe mode
             fallback_result = ReasoningResult(
                 result_id=f"RES-{request.request_id.replace('REQ-', '')}",
@@ -245,6 +254,6 @@ class ContextReasoningPipeline:
                 intent="general_qa",
                 reasoning_steps=audit + [f"Fallback triggered due to error: {type(llm_err).__name__}"],
                 prompt_version=request.prompt_version,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=fallback_ts,
             )
             return fallback_result

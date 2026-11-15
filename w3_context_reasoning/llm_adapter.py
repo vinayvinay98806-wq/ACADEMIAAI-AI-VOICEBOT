@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import time
-import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -18,6 +17,7 @@ from typing import Any, Dict, List, Optional
 from .schemas import ReasoningRequest, ReasoningResult, SourceReference, ScreenContext, ContextItem
 from .validation import validate_result, InvalidResultError, GroundingError
 from .prompts.manager import RenderedPrompt
+from .clock import get_current_timestamp, is_time_frozen
 
 
 class LLMClientError(Exception):
@@ -282,6 +282,15 @@ class MockLLMClient(LLMClientAdapter):
         if self.force_ungrounded_source:
             matched_sources.append("HALLUCINATED-SOURCE-REF-999")
 
+        created_at_ts = (
+            request.parameters.get("timestamp")
+            or (get_current_timestamp() if is_time_frozen() else (
+                request.screen_context.timestamp
+                if request.screen_context and request.screen_context.timestamp
+                else get_current_timestamp()
+            ))
+        )
+
         payload = {
             "result_id": f"RES-{request.request_id.replace('REQ-', '')}",
             "request_id": request.request_id,
@@ -296,7 +305,7 @@ class MockLLMClient(LLMClientAdapter):
                 f"MockLLM: grounded against sources {matched_sources}.",
             ],
             "prompt_version": request.prompt_version,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at_ts,
         }
 
         return json.dumps(payload)

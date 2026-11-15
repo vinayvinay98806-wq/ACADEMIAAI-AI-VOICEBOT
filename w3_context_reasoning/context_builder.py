@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 from .schemas import ContextItem, SourceReference, ScreenContext
+from .clock import get_current_time
 
 
 STOPWORDS = {
@@ -205,7 +206,7 @@ class ContextBuilder:
         """
         Builds a bounded, ranked context respecting token budget and recency/relevance thresholds.
         """
-        now = current_time or datetime.now(timezone.utc)
+        now = current_time or get_current_time()
         items_in = list(context_items or [])
         sources_in = list(source_references or [])
         audit: List[str] = []
