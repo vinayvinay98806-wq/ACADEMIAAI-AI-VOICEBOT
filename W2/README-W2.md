@@ -315,3 +315,50 @@ print("Final Transcript:", orchestrator.get_transcript())
 1. **Deterministic Mock vs Cloud Providers**: All current demonstrations use `DeterministicFakeTranscriber` for zero-cost, offline repeatability. Real cloud providers (Deepgram, Whisper API, AssemblyAI) implement `BaseTranscriptionAdapter` in subsequent workstreams.
 2. **Sample Width**: Preprocessing supports 8-bit, 16-bit (standard), and 32-bit PCM. Exotic encodings (e.g. mu-law / a-law) should be decoded prior to ingestion or handled by external decoders.
 3. **Resampling Algorithm**: Resampling uses linear interpolation for fast deterministic execution without external C library bindings. Band-limited polyphase sinc interpolation can be enabled if acoustic fidelity at high Nyquist cutoffs is needed.
+
+---
+
+## 8. Week 3 Stage 1: Session-Aware Revisions and Confidence Review
+
+`SessionAwareTranscriptionManager` adds session-isolated transcript update events on top of
+the Week 2 `STTOrchestrator`. It creates a separate adapter, orchestrator, and accumulator
+per session; pass an adapter factory rather than sharing a stateful provider instance.
+
+Each emitted `SessionTranscriptEvent` includes a session ID, correlation ID, sequence ID,
+event type, timestamp, segment ID and text where applicable, plus confidence when the
+provider supplies it. Interim events are emitted as `revision` updates with per-segment revision numbers.
+Final events are emitted as `finalization` updates and cannot be replaced by later interim
+events. Duplicate provider event IDs and stale interim sequence IDs are suppressed. The
+underlying Week 2 accumulator continues to order segments chronologically.
+
+Confidence threshold is configurable from `0.0` to `1.0`. Segments below the threshold
+remain in the transcript and carry `review_required=True`; they are not discarded. If a
+provider has no confidence score, the segment confidence is `None` and the event is flagged
+for review. Existing numeric confidence values and adapter behavior remain supported.
+
+```python
+from w2_stt.fake_transcriber import DeterministicFakeTranscriber
+from w2_stt.session_transcription import SessionAwareTranscriptionManager
+
+manager = SessionAwareTranscriptionManager(
+    adapter_factory=DeterministicFakeTranscriber,
+    confidence_threshold=0.90,
+)
+session_id = manager.create_session(correlation_id="lecture-correlation")
+updates = manager.process_chunk(session_id, b"\x00\x01" * 80)
+for update in updates:
+    print(update.event_type.value, update.segment_id, update.review_required, update.text)
+manager.finalize_session(session_id)
+print(manager.get_transcript(session_id))
+```
+
+Run the deterministic, offline Week 3 mock demonstration from `W2/`:
+
+```powershell
+$env:PYTHONPATH = "src;."
+python demo_week3.py
+```
+
+Week 3 Stage 1 does not perform acoustic speech detection or interrupt synchronous provider
+calls. It provides session-scoped transcription updates, revision/finalization semantics,
+and confidence review flags around the existing synchronous W2 pipeline.

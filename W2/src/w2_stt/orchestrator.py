@@ -25,6 +25,7 @@ from w2_stt.adapter import BaseTranscriptionAdapter
 from w2_stt.exceptions import (
     STTError,
     STTInputError,
+    STTPermanentError,
     STTProviderError,
     to_transcript_error_info,
 )
@@ -110,6 +111,7 @@ class STTOrchestrator:
 
         self._chunk_counter: int = 0
         self._total_audio_duration_ms: float = 0.0
+        self._last_sequence_id: Optional[int] = None
 
     @property
     def session_id(self) -> str:
@@ -227,13 +229,15 @@ class STTOrchestrator:
         }
         if context:
             merged_context.update(context)
+        merged_context["session_id"] = self._session_id
 
         # 4. Invoke transcription adapter under retry & timeout policy
         def _invoke_adapter() -> List[TranscriptEvent]:
-            return self._adapter.process_audio_chunk(
+            events = self._adapter.process_audio_chunk(
                 processed_chunk.data,
                 context=merged_context,
             )
+            return self._validate_provider_events(events)
 
         try:
             raw_events = execute_with_retry(
@@ -248,24 +252,25 @@ class STTOrchestrator:
         # 5. Enrich events with chunk telemetry if enabled
         emitted_events: List[TranscriptEvent] = []
         for raw_event in raw_events:
-            event_to_accumulate = raw_event
+            metadata = dict(raw_event.metadata)
+            metadata["sequence_id"] = processed_chunk.sequence_id
+            if merged_context.get("correlation_id") is not None:
+                metadata["correlation_id"] = merged_context["correlation_id"]
             if self._config.preserve_chunk_metadata:
-                metadata = dict(raw_event.metadata)
                 metadata.setdefault("chunk_sequence_id", processed_chunk.sequence_id)
                 metadata.setdefault("chunk_timestamp_ms", processed_chunk.timestamp_ms)
                 metadata.setdefault("chunk_duration_ms", processed_chunk.duration_ms)
                 metadata.setdefault("provider_name", self._adapter.provider_name)
 
-                # Reconstruct event with enriched metadata
-                event_to_accumulate = TranscriptEvent(
-                    event_id=raw_event.event_id,
-                    session_id=raw_event.session_id or self._session_id,
-                    event_type=raw_event.event_type,
-                    timestamp=raw_event.timestamp,
-                    segment=raw_event.segment,
-                    error=raw_event.error,
-                    metadata=metadata,
-                )
+            event_to_accumulate = TranscriptEvent(
+                event_id=raw_event.event_id,
+                session_id=self._session_id,
+                event_type=raw_event.event_type,
+                timestamp=raw_event.timestamp,
+                segment=raw_event.segment,
+                error=raw_event.error,
+                metadata=metadata,
+            )
 
             # 6. Accumulate into session accumulator
             self._accumulator.add_event(event_to_accumulate)
@@ -273,6 +278,7 @@ class STTOrchestrator:
 
         # 7. Update internal metrics
         self._chunk_counter += 1
+        self._last_sequence_id = processed_chunk.sequence_id
         if processed_chunk.duration_ms:
             self._total_audio_duration_ms += processed_chunk.duration_ms
 
@@ -307,7 +313,7 @@ class STTOrchestrator:
             List of final TranscriptEvent instances emitted on flush.
         """
         def _invoke_flush() -> List[TranscriptEvent]:
-            return self._adapter.flush()
+            return self._validate_provider_events(self._adapter.flush())
 
         try:
             flushed_events = execute_with_retry(
@@ -321,20 +327,20 @@ class STTOrchestrator:
 
         enriched_events: List[TranscriptEvent] = []
         for event in flushed_events:
-            enriched = event
+            metadata = dict(event.metadata)
+            metadata["sequence_id"] = self._last_sequence_id or 0
             if self._config.preserve_chunk_metadata:
-                meta = dict(event.metadata)
-                meta.setdefault("provider_name", self._adapter.provider_name)
-                meta.setdefault("flushed", True)
-                enriched = TranscriptEvent(
-                    event_id=event.event_id,
-                    session_id=event.session_id or self._session_id,
-                    event_type=event.event_type,
-                    timestamp=event.timestamp,
-                    segment=event.segment,
-                    error=event.error,
-                    metadata=meta,
-                )
+                metadata.setdefault("provider_name", self._adapter.provider_name)
+                metadata.setdefault("flushed", True)
+            enriched = TranscriptEvent(
+                event_id=event.event_id,
+                session_id=self._session_id,
+                event_type=event.event_type,
+                timestamp=event.timestamp,
+                segment=event.segment,
+                error=event.error,
+                metadata=metadata,
+            )
             self._accumulator.add_event(enriched)
             enriched_events.append(enriched)
 
@@ -346,6 +352,7 @@ class STTOrchestrator:
         self._accumulator.reset()
         self._chunk_counter = 0
         self._total_audio_duration_ms = 0.0
+        self._last_sequence_id = None
         # If no explicit session_id was given at config, generate fresh session_id
         if self._config.session_id is None:
             self._session_id = f"stt-session-{uuid.uuid4().hex[:8]}"
@@ -398,11 +405,39 @@ class STTOrchestrator:
             ) from error
 
         error_info = to_transcript_error_info(error)
+        metadata: Dict[str, Any] = {"provider_name": self._adapter.provider_name}
+        if context:
+            for key in ("sequence_id", "sequence_number", "correlation_id"):
+                if key in context:
+                    metadata[key] = context[key]
         err_event = TranscriptEvent(
             session_id=self._session_id,
             event_type=TranscriptEventType.ERROR,
             error=error_info,
-            metadata={"provider_name": self._adapter.provider_name},
+            metadata=metadata,
         )
         self._accumulator.add_event(err_event)
         return [err_event]
+
+    def _validate_provider_events(self, events: Any) -> List[TranscriptEvent]:
+        """Validate adapter output and reject events attributed to another session."""
+        if not isinstance(events, list):
+            raise STTPermanentError(
+                "Transcription adapter returned a non-list event payload",
+                provider_name=self._adapter.provider_name,
+                details={"payload_type": type(events).__name__},
+            )
+        for index, event in enumerate(events):
+            if not isinstance(event, TranscriptEvent):
+                raise STTPermanentError(
+                    "Transcription adapter returned a malformed transcript event",
+                    provider_name=self._adapter.provider_name,
+                    details={"event_index": index, "event_type": type(event).__name__},
+                )
+            if event.session_id not in (None, self._session_id):
+                raise STTPermanentError(
+                    "Transcription adapter returned an event for a different session",
+                    provider_name=self._adapter.provider_name,
+                    details={"event_index": index},
+                )
+        return events

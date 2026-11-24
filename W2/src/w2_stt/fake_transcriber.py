@@ -79,6 +79,7 @@ class DeterministicFakeTranscriber(BaseTranscriptionAdapter):
         self._current_time_offset: float = 0.0
         self._pending_interim: Optional[TranscriptSegment] = None
         self._current_segment_id: int = 1
+        self._current_session_id = "mock-session-001"
 
     @property
     def provider_name(self) -> str:
@@ -99,6 +100,7 @@ class DeterministicFakeTranscriber(BaseTranscriptionAdapter):
         self._chunk_counter += 1
         ctx = context or {}
         session_id = ctx.get("session_id", "mock-session-001")
+        self._current_session_id = str(session_id)
         language = ctx.get("language", self._default_language)
 
         # 1. Check for scripted error simulation
@@ -204,7 +206,7 @@ class DeterministicFakeTranscriber(BaseTranscriptionAdapter):
             )
             events.append(
                 TranscriptEvent(
-                    session_id="mock-session-001",
+                    session_id=self._current_session_id,
                     event_type=TranscriptEventType.FINAL,
                     timestamp=self._current_time_offset,
                     segment=final_segment,
@@ -221,3 +223,4 @@ class DeterministicFakeTranscriber(BaseTranscriptionAdapter):
         self._pending_interim = None
         self._current_segment_id = 1
         self._scripted_events = [list(batch) for batch in self._initial_scripted]
+        self._current_session_id = "mock-session-001"

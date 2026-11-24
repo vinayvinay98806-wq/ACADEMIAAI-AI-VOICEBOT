@@ -66,7 +66,7 @@ class TranscriptSegment(BaseModel):
         start_time: Start offset in seconds from audio stream origin (>= 0.0).
         end_time: End offset in seconds from audio stream origin (>= start_time).
         text: Transcribed text content.
-        confidence: Normalized confidence score bounded between 0.0 and 1.0.
+        confidence: Optional normalized confidence score bounded between 0.0 and 1.0.
         is_final: True if the segment is confirmed final; False if interim/provisional.
         language: BCP-47 / ISO language code (e.g. 'en-US', 'hi-IN').
         speaker_id: Optional identifier for diarized speakers.
@@ -93,11 +93,11 @@ class TranscriptSegment(BaseModel):
         ...,
         description="Transcribed textual representation of speech.",
     )
-    confidence: float = Field(
-        ...,
+    confidence: Optional[float] = Field(
+        default=None,
         ge=0.0,
         le=1.0,
-        description="Transcription confidence score strictly bounded in [0.0, 1.0].",
+        description="Optional confidence score in [0.0, 1.0]; None means the provider did not supply one.",
     )
     is_final: bool = Field(
         default=False,

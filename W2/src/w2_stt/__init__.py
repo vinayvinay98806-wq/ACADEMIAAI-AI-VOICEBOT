@@ -48,6 +48,12 @@ from w2_stt.orchestrator import (
     STTOrchestrator,
     OrchestratorConfig,
 )
+from w2_stt.session_transcription import (
+    ConfidencePolicy,
+    SessionAwareTranscriptionManager,
+    SessionTranscriptEvent,
+    TranscriptUpdateType,
+)
 
 __all__ = [
     # Schemas
@@ -81,4 +87,9 @@ __all__ = [
     # Orchestrator
     "STTOrchestrator",
     "OrchestratorConfig",
+    # Week 3 session-aware transcription
+    "ConfidencePolicy",
+    "SessionAwareTranscriptionManager",
+    "SessionTranscriptEvent",
+    "TranscriptUpdateType",
 ]

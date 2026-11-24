@@ -93,7 +93,7 @@ class DemoTransientFlakyAdapter(BaseTranscriptionAdapter):
         print(f"    [PROVIDER ATTEMPT {self.calls}] Connection restored! Audio transcribed successfully.")
         return [
             TranscriptEvent(
-                session_id="flaky-demo-session",
+                session_id=context.get("session_id", "flaky-demo-session") if context else "flaky-demo-session",
                 event_type=TranscriptEventType.FINAL,
                 timestamp=1.0,
                 segment=TranscriptSegment(

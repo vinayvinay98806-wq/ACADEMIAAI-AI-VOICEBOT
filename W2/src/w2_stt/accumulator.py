@@ -43,6 +43,7 @@ class OrderedTranscriptAccumulator:
         self._interim_segments: Dict[str, TranscriptSegment] = {}
         self._recorded_errors: List[TranscriptErrorInfo] = []
         self._seen_event_ids: Set[str] = set()
+        self._latest_interim_sequence: Dict[str, int] = {}
         self._duplicate_events_count: int = 0
         self._total_event_count: int = 0
 
@@ -114,6 +115,21 @@ class OrderedTranscriptAccumulator:
 
         # 4. Handle Interim or Final Segment Event
         if event.segment is not None:
+            segment_id = event.segment.segment_id
+            if event.event_type == TranscriptEventType.FINAL and segment_id in self._final_segments:
+                return True
+            if event.event_type == TranscriptEventType.INTERIM:
+                if segment_id in self._final_segments:
+                    return True
+                sequence_id = event.metadata.get(
+                    "sequence_id",
+                    event.metadata.get("chunk_sequence_id"),
+                )
+                if isinstance(sequence_id, int) and not isinstance(sequence_id, bool):
+                    previous_sequence = self._latest_interim_sequence.get(segment_id)
+                    if previous_sequence is not None and sequence_id <= previous_sequence:
+                        return True
+                    self._latest_interim_sequence[segment_id] = sequence_id
             self.add_segment(event.segment)
 
         return True
@@ -127,6 +143,8 @@ class OrderedTranscriptAccumulator:
         seg_id = segment.segment_id
 
         if segment.is_final:
+            if seg_id in self._final_segments:
+                return
             # 1. Purge any interim representation for this segment
             self._interim_segments.pop(seg_id, None)
 
@@ -199,5 +217,6 @@ class OrderedTranscriptAccumulator:
         self._interim_segments.clear()
         self._recorded_errors.clear()
         self._seen_event_ids.clear()
+        self._latest_interim_sequence.clear()
         self._duplicate_events_count = 0
         self._total_event_count = 0
