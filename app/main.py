@@ -1,14 +1,14 @@
 """FastAPI application entry point for Team SDE 7 (W5)."""
 
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.config import get_settings
-from app.core.exceptions import AppException
+from app.config import Settings, get_settings
+from app.core.exceptions import AppException, RateLimitExceededError
 from app.core.logging import logger, setup_logging
 from app.core.middleware import RequestCorrelationMiddleware
 from app.models.errors import ErrorDetail, ErrorEnvelope
@@ -18,7 +18,7 @@ from app.routers import health, sessions
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan context manager for startup validation and shutdown events."""
-    settings = get_settings()
+    settings = getattr(getattr(app, "state", None), "settings", None) or get_settings()
 
     # Configure structured logger according to settings
     setup_logging(level=settings.log_level, format_type=settings.log_format)
@@ -36,25 +36,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(f"Shutting down {settings.app_name}")
 
 
-def create_app() -> FastAPI:
+def create_app(settings: Optional[Settings] = None) -> FastAPI:
     """Create and configure the FastAPI application instance."""
-    settings = get_settings()
+    app_settings = settings or get_settings()
 
     app = FastAPI(
-        title=settings.app_name,
+        title=app_settings.app_name,
         description=(
             "Academiaai AI Voicebot Backend - Team SDE 7\n"
-            "Workstream W5: Backend, Sessions and Observability (Week 2 Complete Lifecycle & Streaming)"
+            "Workstream W5: Backend, Sessions and Observability (Week 3 Gateways, Replay, Auth & Integration)"
         ),
-        version=settings.version,
+        version=app_settings.version,
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
 
-    # 1. Register Request, Correlation ID, and Payload Limit Middleware
-    app.add_middleware(RequestCorrelationMiddleware)
+    app.state.settings = app_settings
+    if settings is not None:
+        app.dependency_overrides[get_settings] = lambda: app_settings
+
+    # 1. Register Request, Correlation ID, Payload Limit, Rate Limiting, and Auth Middleware
+    app.add_middleware(RequestCorrelationMiddleware, settings=app_settings)
 
     # 2. Register Global Exception Handlers for Typed Error Envelope
 
@@ -71,9 +75,14 @@ def create_app() -> FastAPI:
                 details=exc.details,
             ),
         )
+        headers = {}
+        if isinstance(exc, RateLimitExceededError):
+            headers["Retry-After"] = str(exc.retry_after)
+
         return JSONResponse(
             status_code=exc.status_code,
             content=envelope.model_dump(mode="json"),
+            headers=headers if headers else None,
         )
 
     @app.exception_handler(RequestValidationError)
@@ -120,8 +129,11 @@ def create_app() -> FastAPI:
             405: "METHOD_NOT_ALLOWED",
             409: "CONFLICT",
             413: "PAYLOAD_TOO_LARGE",
+            429: "RATE_LIMIT_EXCEEDED",
             500: "INTERNAL_ERROR",
+            502: "GATEWAY_ERROR",
             503: "SERVICE_UNAVAILABLE",
+            504: "GATEWAY_TIMEOUT",
         }
         code = code_map.get(exc.status_code, f"HTTP_{exc.status_code}")
         envelope = ErrorEnvelope(
@@ -161,10 +173,10 @@ def create_app() -> FastAPI:
     # 3. Mount Routers
     # Health checks available at root and versioned prefix
     app.include_router(health.router)
-    app.include_router(health.router, prefix=settings.api_v1_prefix)
+    app.include_router(health.router, prefix=app_settings.api_v1_prefix)
 
     # Session routes under versioned prefix /api/v1/sessions and unversioned /sessions
-    app.include_router(sessions.router, prefix=settings.api_v1_prefix)
+    app.include_router(sessions.router, prefix=app_settings.api_v1_prefix)
     app.include_router(sessions.router)
 
     return app

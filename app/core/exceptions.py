@@ -121,3 +121,89 @@ class ConfigurationError(AppException):
             status_code=500,
             details=details,
         )
+
+
+class UnauthorizedError(AppException):
+    """Raised when authentication credentials are required but missing or malformed."""
+
+    def __init__(
+        self,
+        message: str = "Authentication required. Provide valid 'Authorization: Bearer <token>' or 'X-API-Key'.",
+        details: Optional[Any] = None,
+    ):
+        super().__init__(
+            message=message,
+            code="UNAUTHORIZED",
+            status_code=401,
+            details=details,
+        )
+
+
+class ForbiddenError(AppException):
+    """Raised when authentication credentials are provided but invalid or forbidden."""
+
+    def __init__(
+        self,
+        message: str = "Invalid authentication credentials.",
+        details: Optional[Any] = None,
+    ):
+        super().__init__(
+            message=message,
+            code="FORBIDDEN",
+            status_code=403,
+            details=details,
+        )
+
+
+class RateLimitExceededError(AppException):
+    """Raised when a client exceeds the allowed request rate limit."""
+
+    def __init__(
+        self,
+        message: str = "Rate limit exceeded. Please wait before retrying.",
+        retry_after: int = 60,
+        details: Optional[Any] = None,
+    ):
+        detail_dict = {"retry_after_seconds": retry_after}
+        if isinstance(details, dict):
+            detail_dict.update(details)
+        self.retry_after = retry_after
+        super().__init__(
+            message=message,
+            code="RATE_LIMIT_EXCEEDED",
+            status_code=429,
+            details=detail_dict,
+        )
+
+
+class GatewayError(AppException):
+    """Raised when a gateway downstream module fails or produces invalid output."""
+
+    def __init__(
+        self,
+        module_name: str,
+        message: str,
+        details: Optional[Any] = None,
+    ):
+        super().__init__(
+            message=f"Gateway failure in module '{module_name}': {message}",
+            code="GATEWAY_ERROR",
+            status_code=502,
+            details={"module": module_name, "error": message, "extra": details},
+        )
+
+
+class GatewayTimeoutError(AppException):
+    """Raised when a gateway downstream module call times out."""
+
+    def __init__(
+        self,
+        module_name: str,
+        timeout_seconds: float,
+    ):
+        super().__init__(
+            message=f"Gateway call to module '{module_name}' timed out after {timeout_seconds:.1f}s.",
+            code="GATEWAY_TIMEOUT",
+            status_code=504,
+            details={"module": module_name, "timeout_seconds": timeout_seconds},
+        )

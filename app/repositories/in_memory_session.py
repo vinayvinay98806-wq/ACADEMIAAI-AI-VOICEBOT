@@ -1,7 +1,7 @@
-"""In-memory implementation of the Session repository with event pubsub."""
+"""In-memory implementation of the Session repository with event pubsub and atomic replay."""
 
 import asyncio
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 from app.core.logging import logger
 from app.models.session import Session, SessionEvent
@@ -9,12 +9,13 @@ from app.repositories.base import BaseSessionRepository
 
 
 class InMemorySessionRepository(BaseSessionRepository):
-    """Thread-safe in-memory session and event repository with subscriber notifications."""
+    """Thread-safe in-memory session and event repository with atomic subscriber notifications."""
 
     def __init__(self) -> None:
         self._sessions: Dict[str, Session] = {}
         self._events: Dict[str, List[SessionEvent]] = {}
         self._subscribers: Dict[str, List[asyncio.Queue[SessionEvent]]] = {}
+        self._overflowed_queues: Dict[str, Set[asyncio.Queue[SessionEvent]]] = {}
         self._lock = asyncio.Lock()
 
     async def create(self, session: Session) -> Session:
@@ -26,6 +27,8 @@ class InMemorySessionRepository(BaseSessionRepository):
                 self._events[session.session_id] = []
             if session.session_id not in self._subscribers:
                 self._subscribers[session.session_id] = []
+            if session.session_id not in self._overflowed_queues:
+                self._overflowed_queues[session.session_id] = set()
             logger.info(f"Session stored in memory: {session.session_id} [state={session.state.value}]")
             return stored.model_copy(deep=True)
 
@@ -57,9 +60,19 @@ class InMemorySessionRepository(BaseSessionRepository):
         async with self._lock:
             if session_id not in self._events:
                 self._events[session_id] = []
+            if session_id not in self._subscribers:
+                self._subscribers[session_id] = []
+            if session_id not in self._overflowed_queues:
+                self._overflowed_queues[session_id] = set()
+
             event_copy = event.model_copy(deep=True)
+            # Assign strictly monotonic sequence number within this session
+            event_copy.sequence_number = len(self._events[session_id]) + 1
             self._events[session_id].append(event_copy)
-            logger.info(f"Event added for session {session_id}: {event.event_type} [id={event.event_id}]")
+            logger.info(
+                f"Event added for session {session_id}: {event.event_type} "
+                f"[id={event.event_id}, seq={event_copy.sequence_number}]"
+            )
 
             # Broadcast to live subscribers
             queues = self._subscribers.get(session_id, [])
@@ -67,7 +80,8 @@ class InMemorySessionRepository(BaseSessionRepository):
                 try:
                     q.put_nowait(event_copy)
                 except asyncio.QueueFull:
-                    logger.warning(f"Subscriber queue full for session {session_id}")
+                    logger.warning(f"Subscriber queue full for session {session_id}; marking overflow.")
+                    self._overflowed_queues[session_id].add(q)
 
             return event_copy.model_copy(deep=True)
 
@@ -98,6 +112,8 @@ class InMemorySessionRepository(BaseSessionRepository):
         async with self._lock:
             if session_id not in self._subscribers:
                 self._subscribers[session_id] = []
+            if session_id not in self._overflowed_queues:
+                self._overflowed_queues[session_id] = set()
             q: asyncio.Queue[SessionEvent] = asyncio.Queue(maxsize=100)
             self._subscribers[session_id].append(q)
             logger.info(f"Subscriber connected to session {session_id}")
@@ -114,6 +130,61 @@ class InMemorySessionRepository(BaseSessionRepository):
                     logger.info(f"Subscriber disconnected from session {session_id}")
                 except ValueError:
                     pass
+            if session_id in self._overflowed_queues and queue in self._overflowed_queues[session_id]:
+                self._overflowed_queues[session_id].discard(queue)
+
+    async def subscribe_and_replay(
+        self,
+        session_id: str,
+        since_event_id: Optional[str] = None,
+        since_seq: Optional[int] = None,
+    ) -> Tuple[List[SessionEvent], asyncio.Queue[SessionEvent]]:
+        """Atomically register a subscriber queue and capture historical events under a single lock boundary.
+
+        Eliminates any race condition between historical replay and live stream ingestion.
+        Guarantees zero missed events and zero duplicates.
+        """
+        async with self._lock:
+            if session_id not in self._subscribers:
+                self._subscribers[session_id] = []
+            if session_id not in self._overflowed_queues:
+                self._overflowed_queues[session_id] = set()
+
+            q: asyncio.Queue[SessionEvent] = asyncio.Queue(maxsize=100)
+            self._subscribers[session_id].append(q)
+
+            events = self._events.get(session_id, [])
+            historical: List[SessionEvent] = []
+
+            if since_seq is not None:
+                historical = [
+                    e.model_copy(deep=True)
+                    for e in events
+                    if (e.sequence_number or 0) > since_seq
+                ]
+            elif since_event_id is not None:
+                idx = -1
+                for i, evt in enumerate(events):
+                    if evt.event_id == since_event_id:
+                        idx = i
+                        break
+                if idx != -1:
+                    historical = [e.model_copy(deep=True) for e in events[idx + 1:]]
+                else:
+                    historical = [e.model_copy(deep=True) for e in events]
+            else:
+                historical = [e.model_copy(deep=True) for e in events]
+
+            logger.info(
+                f"Atomic subscribe_and_replay for {session_id}: "
+                f"captured {len(historical)} historical events under lock."
+            )
+            return historical, q
+
+    async def has_overflowed(self, session_id: str, queue: asyncio.Queue[SessionEvent]) -> bool:
+        """Check if a subscriber queue experienced overflow due to backpressure."""
+        async with self._lock:
+            return queue in self._overflowed_queues.get(session_id, set())
 
     async def clear(self) -> None:
         """Clear all stored sessions and events."""
@@ -121,6 +192,7 @@ class InMemorySessionRepository(BaseSessionRepository):
             self._sessions.clear()
             self._events.clear()
             self._subscribers.clear()
+            self._overflowed_queues.clear()
             logger.info("In-memory repository cleared.")
 
 

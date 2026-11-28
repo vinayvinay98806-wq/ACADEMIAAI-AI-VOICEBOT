@@ -2,7 +2,7 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from app.models.session import Session, SessionEvent
 
@@ -50,6 +50,21 @@ class BaseSessionRepository(ABC):
     @abstractmethod
     async def unsubscribe_events(self, session_id: str, queue: asyncio.Queue) -> None:
         """Unsubscribe from real-time events for a session."""
+        pass
+
+    @abstractmethod
+    async def subscribe_and_replay(
+        self,
+        session_id: str,
+        since_event_id: Optional[str] = None,
+        since_seq: Optional[int] = None,
+    ) -> Tuple[List[SessionEvent], asyncio.Queue]:
+        """Atomically register a subscriber and capture historical events under a single lock boundary."""
+        pass
+
+    @abstractmethod
+    async def has_overflowed(self, session_id: str, queue: asyncio.Queue) -> bool:
+        """Check if a subscriber queue experienced overflow due to backpressure."""
         pass
 
     @abstractmethod

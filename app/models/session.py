@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
+import uuid
 from pydantic import BaseModel, Field
 
 from app.core.exceptions import InvalidStateTransitionError
@@ -62,7 +63,10 @@ TERMINAL_STATES: Set[SessionState] = {
 class SessionEvent(BaseModel):
     """Event occurring within a voice session."""
 
-    event_id: str = Field(..., description="Unique event ID")
+    event_id: str = Field(
+        default_factory=lambda: f"evt-{uuid.uuid4().hex[:8]}",
+        description="Unique event ID",
+    )
     session_id: str = Field(..., description="Associated session ID")
     event_type: str = Field(..., description="Type of event (e.g. session.started, session.paused)")
     payload: Dict[str, Any] = Field(
@@ -72,6 +76,10 @@ class SessionEvent(BaseModel):
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Event UTC timestamp",
+    )
+    sequence_number: Optional[int] = Field(
+        default=None,
+        description="Strictly monotonic event sequence number within the session",
     )
 
 
@@ -226,3 +234,38 @@ class SessionEventsResponse(BaseModel):
     session_id: str
     events: List[SessionEvent]
     total: int
+
+
+class SessionInteractionRequest(BaseModel):
+    """Request payload to trigger an end-to-end gateway interaction in a session."""
+
+    user_query: Optional[str] = Field(
+        None,
+        description="Optional text query override (skips audio input/transcription if provided)",
+    )
+    audio_base64: Optional[str] = Field(
+        None,
+        description="Optional base64 encoded audio bytes",
+    )
+    workflow_goal: Optional[str] = Field(
+        None,
+        description="Optional specific goal for the workflow engine",
+    )
+    timeout_seconds: Optional[float] = Field(
+        10.0,
+        gt=0,
+        le=120.0,
+        description="Timeout in seconds for complete interaction flow",
+    )
+
+
+class SessionInteractionResponse(BaseModel):
+    """Response payload for end-to-end gateway interaction."""
+
+    success: bool = Field(True, description="Success status")
+    session_id: str
+    audio: Optional[Dict[str, Any]] = Field(None, description="Audio processing stage result")
+    transcript: Optional[Dict[str, Any]] = Field(None, description="Transcription stage result")
+    reasoning: Optional[Dict[str, Any]] = Field(None, description="Reasoning stage result")
+    workflow: Optional[Dict[str, Any]] = Field(None, description="Workflow execution result")
+    events_emitted: List[str] = Field(default_factory=list, description="IDs of events recorded during interaction")

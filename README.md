@@ -1,49 +1,49 @@
 # Academiaai AI Voicebot Backend (Team SDE 7)
 
-## Workstream W5: Backend, Sessions and Observability — Week 2 Implementation
+## Workstream W5: Backend, Sessions and Observability — Week 3 Implementation
 
-Welcome to the backend service for the **Academiaai AI Voicebot**, developed by **Team SDE 7**. This repository hosts the implementation of **Workstream W5 (Backend, Sessions, and Observability)** covering both **Week 1** foundation and **Week 2 (Days 8–14)** complete session lifecycle, Server-Sent Events (SSE) streaming, configurable payload limits, startup configuration validation, and structured observability.
+Welcome to the backend service for the **Academiaai AI Voicebot**, developed by **Team SDE 7**. This repository hosts the implementation of **Workstream W5 (Backend, Sessions, and Observability)** covering **Week 1** foundation, **Week 2** complete session lifecycle & streaming, and **Week 3 (Days 15–21)** cross-workstream module gateways, atomic event replay & reconnect, local token authorization, sliding-window rate limiting, aggregated health monitoring, and end-to-end integration.
 
 ---
 
-## 1. Executive Summary & Week 2 Scope
+## 1. Executive Summary & Week 3 Scope
 
-Week 2 expands upon the solid Week 1 skeleton with full production-grade lifecycle capabilities:
+Week 3 integrates the W5 backend with the upstream and downstream workstreams (W1 Audio, W2 STT, W3 Context & Reasoning, W4 Workflow), while hardening the core with production-grade authorization, rate limiting, and zero-loss event streaming:
 
-- **Complete Session Lifecycle (Days 8–9)**:
-  - Standard session creation with custom TTL support (`POST /api/v1/sessions`).
-  - Session pause (`POST /api/v1/sessions/{session_id}/pause`).
-  - Session resume (`POST /api/v1/sessions/{session_id}/resume`).
-  - Session stop/completion (`POST /api/v1/sessions/{session_id}/stop`).
-  - Explicit and automatic session expiry (`POST /api/v1/sessions/{session_id}/expire`).
-  - **Idempotency**: Repeated commands (e.g. pausing an already paused session or stopping a completed session) return `200 OK` as no-ops without creating duplicate events or corrupting state.
-  - **Terminal State Protection**: Transitions out of `completed`, `expired`, or `failed` are strictly rejected with `409 Conflict` typed errors.
-  - **Lifecycle Timestamps**: Automated tracking of `created_at`, `updated_at`, `expires_at`, and `ended_at`.
-- **Event Streaming & Replay (Days 10–11)**:
-  - Real-time Server-Sent Events (SSE) endpoint (`GET /api/v1/sessions/{session_id}/events/stream`).
-  - Strict chronological event ordering (`id: ...`, `event: ...`, `data: ...`).
-  - Reconnect and replay capabilities via `Last-Event-ID` header and `?since_id=...` query parameter.
-  - Safe disconnection handling and pubsub subscriber decoupling.
-  - Unknown session validation returning typed `404 Not Found` error envelopes.
-- **Request Validation & Payload Limits (Days 10–11)**:
-  - Configurable payload limits (`max_payload_size_bytes`, default 1MB).
-  - Rapid rejection of oversized payloads (`413 Payload Too Large`) with typed error envelopes.
-  - Strict Pydantic input validation rejecting malformed payloads (`422 Unprocessable Content`).
-- **Startup Configuration Validation & Structured Logging (Days 12–13)**:
-  - Centralized settings validation on startup in FastAPI `lifespan`.
-  - Safe mock-mode defaults allowing zero-credential execution.
-  - Strict production-mode checks failing safely when required API keys or database URLs are missing.
-  - Sensitive credential masking (`safe_dict()` and regex log filter redacting tokens, keys, passwords).
-  - Structured logging with `request_id`, `correlation_id`, and `session_id` context propagation.
-- **Comprehensive Verification (Day 14)**:
-  - 49 automated unit and integration tests passing with 100% success rate.
-  - Interactive demonstration scripts (`demo_week1.py` and `demo_week2.py`).
+- **Cross-Workstream Module Gateways (Days 15–16)**:
+  - **W1 Audio Gateway**: Interacts with audio pipelines and capture adapters; supports 16kHz PCM chunks and Voice Activity Detection (VAD).
+  - **W2 STT Gateway**: Transcribes speech into academic queries; supports confidence scoring, multiple languages, and transcript event normalization.
+  - **W3 Context & Reasoning Gateway**: Classifies query intent (`explain_concept`, `schedule_practice`, `general_academic_qa`), checks prerequisites, and grounds responses in academic sources.
+  - **W4 Workflow Gateway**: Executes multi-step agentic plans and simulated tool invocations (`academic_lookup`, `student_status_update`).
+  - **Gateway Coordinator**: Orchestrates `Audio -> STT -> Reasoning -> Workflow -> Session Events` pipeline under configurable timeouts with unified error normalization (`502 GatewayError`, `504 GatewayTimeoutError`).
+  - **Dynamic Fallbacks**: Uses typed `Protocol` abstractions and dynamic module import detection (`app/gateways/module_adapters.py`) with zero-dependency fallback to deterministic mock adapters (`app/gateways/mock_adapters.py`).
+- **Atomic Event Replay & Reconnect (Days 17–18)**:
+  - **Strict Monotonic Sequence Numbers**: Every event assigned `sequence_number = len(events) + 1` within an atomic lock boundary.
+  - **Atomic Queue Registration & Slice**: `subscribe_and_replay()` captures historical event slices and registers live subscriber queues under a single `asyncio.Lock`, eliminating the race window where events could be permanently dropped.
+  - **Cursor-Based Replay**: Supports `Last-Event-ID` header and `?since_id=...` query parameter to replay events strictly after client disconnect.
+  - **Zero Duplicates & Zero Drops**: In-stream deduplication via `seen_event_ids` ensures seamless continuity.
+  - **Bounded Queue Overflow Tracking**: Detects slow client buffer overflows and emits `event: stream.overflow` notifications with re-sync instructions.
+- **Local Authorization & Sliding-Window Rate Limiting (Days 19–20)**:
+  - **Constant-Time Token Check**: `hmac.compare_digest` protects against timing side-channel attacks.
+  - **Typed Error Envelopes**: Rejection with `401 Unauthorized` (missing credentials) and `403 Forbidden` (invalid credentials).
+  - **Public Endpoint Whitelist**: `/health`, `/ready`, `/docs`, `/openapi.json` remain publicly accessible.
+  - **Sliding-Window Rate Limiting**: In-memory rate limiter with automatic pruning, returning `429 Too Many Requests`, `Retry-After`, and `X-RateLimit-*` headers.
+  - **Pluggable Monotonic Clock**: Enables deterministic, zero-sleep testing of rate limit windows.
+  - **Client Isolation**: Independent quota tracking by IP address or authentication token.
+- **Aggregated Component Health & Diagnostics (Day 21)**:
+  - **Liveness Probe (`GET /health`)**: Ultra-lightweight check returning service status.
+  - **Aggregated Readiness Probe (`GET /ready`)**: Aggregates `session_repository`, `mock_provider`, `audio_gateway`, `transcription_gateway`, `reasoning_gateway`, `workflow_gateway`, and `event_stream`. Returns `ready`, `degraded`, or `not_ready`.
+  - **Diagnostic Report (`GET /api/v1/health/aggregated`)**: Component-level latency, provider types, and error details.
+- **Comprehensive Verification & Testing**:
+  - **78 automated unit and integration tests** passing with 100% success rate.
+  - End-to-end 14-point integration suite (`tests/test_e2e_integration.py`).
+  - Interactive demonstration scripts: `demo_week1.py`, `demo_week2.py`, and `demo_week3.py`.
 
 ---
 
 ## 2. Architecture & Project Structure
 
-The project strictly follows layered architecture principles, decoupling Routers, Domain Services, Repositories, and Core Infrastructure:
+The project strictly follows layered architecture principles, decoupling Routers, Gateways, Domain Services, Repositories, and Core Infrastructure:
 
 ```
 .
@@ -53,34 +53,48 @@ The project strictly follows layered architecture principles, decoupling Routers
 │   ├── config.py                  # Centralized Pydantic Settings & startup configuration validation
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── exceptions.py          # Domain exceptions (AppException, PayloadTooLargeError, etc.)
+│   │   ├── auth.py                # Local token authentication & constant-time comparison guardrails
+│   │   ├── exceptions.py          # Domain exceptions (AppException, UnauthorizedError, GatewayError, etc.)
 │   │   ├── logging.py             # Structured logging, JSON formatter, contextvars, sensitive data masking
-│   │   └── middleware.py          # Request ID, Correlation ID tracking, and Payload Size Limit enforcement
+│   │   ├── middleware.py          # Request ID, Correlation ID, Payload Limit, Auth, & Rate Limit middleware
+│   │   └── rate_limit.py          # Sliding-window rate limiter with deterministic mock clock support
+│   ├── gateways/
+│   │   ├── __init__.py            # Gateway package exports
+│   │   ├── protocols.py           # Typed gateway protocols (Audio, STT, Reasoning, Workflow) & data containers
+│   │   ├── mock_adapters.py       # Deterministic standalone mock adapters for all 4 workstreams
+│   │   ├── module_adapters.py     # Dynamic integration adapters importing teammate modules when present
+│   │   ├── factory.py             # Dependency injection providers for gateway adapters
+│   │   └── coordinator.py         # End-to-end voice interaction coordinator (Audio -> STT -> Reasoning -> Workflow)
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── errors.py              # Standardized ErrorDetail and ErrorEnvelope schemas
 │   │   ├── health.py              # HealthResponse and ReadinessResponse schemas
-│   │   └── session.py             # SessionState enum, Session, SessionEvent, lifecycle request/response schemas
+│   │   └── session.py             # SessionState enum, Session, SessionEvent, interaction schemas
 │   ├── repositories/
 │   │   ├── __init__.py
-│   │   ├── base.py                # BaseSessionRepository interface with pubsub methods
-│   │   └── in_memory_session.py   # Thread-safe in-memory store with subscriber broadcast queues
+│   │   ├── base.py                # BaseSessionRepository interface with atomic replay & pubsub methods
+│   │   └── in_memory_session.py   # Thread-safe in-memory store with monotonic sequence & subscribe_and_replay
 │   ├── services/
 │   │   ├── __init__.py
 │   │   └── session_service.py     # Domain service: lifecycle orchestration, idempotency, auto-expiry
 │   └── routers/
 │       ├── __init__.py
-│       ├── health.py              # Liveness (/health) and readiness (/ready) routes
-│       └── sessions.py            # Session CRUD, lifecycle routes (pause/resume/stop/expire), and SSE stream
+│       ├── health.py              # Liveness (/health), readiness (/ready), and aggregated (/health/aggregated)
+│       └── sessions.py            # Session CRUD, lifecycle, SSE streaming, and /interact cross-module endpoint
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py                # TestClient and repository reset fixtures
+│   ├── test_auth_ratelimit.py     # Tests for 401/403 auth guardrails and sliding-window rate limiting
 │   ├── test_config_logging.py     # Tests for startup validation, correlation ID, secret masking, JSON logging
+│   ├── test_e2e_integration.py    # Comprehensive 14-point end-to-end integration test
 │   ├── test_errors.py             # Tests for 404, 422, and 500 error envelopes
-│   ├── test_health.py             # Tests for /health and /ready endpoints
+│   ├── test_gateways.py           # Unit tests for W1, W2, W3, W4 gateways, coordinator, and /interact
+│   ├── test_health.py             # Tests for basic /health and /ready endpoints
+│   ├── test_health_aggregation.py # Tests for aggregated readiness, component breakdown, and degraded handling
 │   ├── test_lifecycle.py          # Tests for create, pause, resume, stop, expire, idempotency, auto-expiry
 │   ├── test_middleware.py         # Tests for ID generation, header preservation, sanitization
 │   ├── test_mock_session.py       # Tests for Week 1 mock routes and basic transitions
+│   ├── test_replay_reconnect.py   # Tests for monotonic sequence, atomic replay, cursor reconnect, queue overflow
 │   ├── test_repository.py         # Unit tests for InMemorySessionRepository
 │   ├── test_streaming.py          # Tests for SSE streaming format, chronological order, replay via Last-Event-ID
 │   └── test_validation_limits.py  # Tests for 413 payload limits, 422 validation, unknown session 404s
@@ -88,7 +102,8 @@ The project strictly follows layered architecture principles, decoupling Routers
 ├── requirements.txt               # Pinned dependencies
 ├── run_mock.py                    # One-command mock mode launcher
 ├── demo_week1.py                  # Week 1 interactive demonstration script
-├── demo_week2.py                  # Week 2 comprehensive interactive demonstration script
+├── demo_week2.py                  # Week 2 lifecycle & streaming demonstration script
+├── demo_week3.py                  # Week 3 full gateway, replay, auth & rate limiting demonstration script
 └── README.md                      # Complete system documentation
 ```
 
@@ -387,18 +402,28 @@ All settings are centralized in `app/config.py` and configurable via environment
 | `MAX_PAYLOAD_SIZE_BYTES` | `int` | `1048576` | Maximum allowed request size in bytes (1MB) |
 | `AI_SERVICE_API_KEY` | `str` | `None` | External AI key (required in production mode) |
 | `DATABASE_URL` | `str` | `None` | Production database connection string |
+| `AUTH_ENABLED` | `bool` | `False` | Enforce local bearer token authorization on API routes |
+| `AUTH_TOKEN` | `str` | `None` | Secret token string for local authorization |
+| `RATE_LIMIT_ENABLED` | `bool` | `False` | Enable in-memory sliding-window rate limiting |
+| `RATE_LIMIT_REQUESTS` | `int` | `60` | Maximum allowed requests per window |
+| `RATE_LIMIT_WINDOW_SECONDS` | `int` | `60` | Sliding window duration in seconds |
+| `GATEWAY_TIMEOUT_SECONDS` | `float` | `10.0` | Default timeout for module gateway operations |
+| `AUDIO_ADAPTER_TYPE` | `str` | `mock` | W1 Audio adapter: `mock` or `module` |
+| `TRANSCRIPTION_ADAPTER_TYPE` | `str` | `mock` | W2 STT adapter: `mock` or `module` |
+| `REASONING_ADAPTER_TYPE` | `str` | `mock` | W3 Reasoning adapter: `mock` or `module` |
+| `WORKFLOW_ADAPTER_TYPE` | `str` | `mock` | W4 Workflow adapter: `mock` or `module` |
 
 ### 5.2 Safe Startup & Production Guardrails
 
 - When `MOCK_MODE=True`, the application initializes immediately with safe mock defaults and requires zero credentials.
 - When `MOCK_MODE=False` (production), startup validation automatically verifies the existence and validity of `AI_SERVICE_API_KEY` and `DATABASE_URL`. If missing or invalid, the service terminates safely with a `ConfigurationError`.
-- Secrets are masked using `settings.safe_dict()`, ensuring API keys and passwords never leak into logs.
+- Secrets and tokens are masked using `settings.safe_dict()`, ensuring API keys, passwords, and authorization tokens never leak into logs.
 
 ### 5.3 Structured Logging & Context Propagation
 
 Every log line captures request and session correlation details:
 ```
-2026-11-07 12:02:24 [INFO] [req_id=req-cd02d9caf60b] [corr_id=req-cd02d9caf60b] [sess_id=sess-937f8b75f9] academiaai: Resumed session sess-937f8b75f9
+2026-11-28 11:22:16 [INFO] [req_id=req-9808afcaf971] [corr_id=trace-demo-week3-777] [sess_id=sess-fcfcaff50c] academiaai: Created session: sess-fcfcaff50c
 ```
 A regex-based `SensitiveDataFilter` automatically scans all log messages and redacts keys, tokens, and authorization headers with `***REDACTED***`.
 
@@ -433,12 +458,12 @@ python run_mock.py
 
 ### 6.3 Executing the Test Suite
 
-Run the full automated test suite covering all 17 test categories:
+Run the full automated test suite covering all Week 1, Week 2, and Week 3 test suites:
 ```bash
 pytest -v
 ```
 
-**Results: 49 passed in ~0.75 seconds.**
+**Results: 78 passed, 0 failed in ~2.2 seconds.**
 
 ### 6.4 Running Interactive Demos
 
@@ -448,4 +473,7 @@ python demo_week1.py
 
 # Run Week 2 complete lifecycle & streaming demonstration
 python demo_week2.py
+
+# Run Week 3 module gateways, atomic replay, auth & rate limiting demonstration
+python demo_week3.py
 ```

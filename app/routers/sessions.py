@@ -1,13 +1,17 @@
-"""Session management, lifecycle operations, and event streaming routes."""
+"""Session management, lifecycle operations, event streaming, and gateway interaction routes."""
 
 import asyncio
+import base64
 import json
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.core.exceptions import InvalidStateTransitionError
 from app.core.logging import logger
+from app.gateways.coordinator import GatewayCoordinator, get_gateway_coordinator
+from app.gateways.protocols import AudioChunkData
 from app.models.session import (
     CreateSessionRequest,
     ExpireSessionRequest,
@@ -16,10 +20,13 @@ from app.models.session import (
     PauseSessionRequest,
     ResumeSessionRequest,
     SessionEventsResponse,
+    SessionInteractionRequest,
+    SessionInteractionResponse,
     SessionLifecycleResponse,
     SessionState,
     SingleSessionResponse,
     StopSessionRequest,
+    TERMINAL_STATES,
 )
 from app.repositories.in_memory_session import (
     InMemorySessionRepository,
@@ -195,7 +202,6 @@ async def get_session_events(
     repository: InMemorySessionRepository = Depends(get_session_repository),
 ) -> SessionEventsResponse:
     """Retrieve recorded events for a session."""
-    # Ensure session exists (auto-checks expiry)
     await service.get_session(session_id, check_expiry=True)
     events = await repository.get_events(session_id, since_event_id=since_id)
     return SessionEventsResponse(
@@ -247,13 +253,13 @@ async def transition_session(
 
 
 # ============================================================================
-# 4. EVENT STREAMING ENDPOINT (DAY 10-11)
+# 4. EVENT STREAMING ENDPOINT WITH ATOMIC REPLAY (DAY 17-18)
 # ============================================================================
 
 @router.get(
     "/{session_id}/events/stream",
     summary="Stream Session Events (SSE)",
-    description="Streams session events in chronological order using Server-Sent Events (SSE). Supports reconnect/replay via Last-Event-ID.",
+    description="Streams session events in chronological order via Server-Sent Events (SSE). Guarantees zero missed events via atomic replay and reconnect support.",
     response_class=StreamingResponse,
 )
 async def stream_session_events(
@@ -265,54 +271,70 @@ async def stream_session_events(
     service: SessionService = Depends(get_session_service),
     repository: InMemorySessionRepository = Depends(get_session_repository),
 ) -> StreamingResponse:
-    """Server-Sent Events (SSE) endpoint for chronological event streaming."""
-    # 1. Validate session existence; raises SessionNotFoundError (404) if unknown
-    await service.get_session(session_id, check_expiry=True)
-
-    # Reconnect / replay support: prioritize header or query param
+    """Server-Sent Events (SSE) endpoint with atomic replay boundary synchronization."""
+    session = await service.get_session(session_id, check_expiry=True)
     effective_since_id = last_event_id_header or since_id
 
+    # Atomically capture replay boundary and register live queue under single lock
+    historical_events, queue = await repository.subscribe_and_replay(
+        session_id=session_id,
+        since_event_id=effective_since_id,
+    )
+
     async def sse_generator() -> AsyncGenerator[str, None]:
-        # Initial SSE comment to acknowledge connection
-        yield f": connected to session {session_id}\n\n"
-
-        # 2. Replay historical events in chronological order
-        historical_events = await repository.get_events(
-            session_id, since_event_id=effective_since_id
-        )
+        seen_event_ids: Set[str] = set()
         last_sent_id = effective_since_id
-        for evt in historical_events:
-            last_sent_id = evt.event_id
-            payload_json = json.dumps(evt.model_dump(mode="json"))
-            yield f"id: {evt.event_id}\nevent: {evt.event_type}\ndata: {payload_json}\n\n"
 
-        # 3. If follow is not requested, finish the stream cleanly
-        if not follow:
-            return
-
-        # 4. If follow is True, listen to live events
-        queue = await repository.subscribe_events(session_id)
         try:
+            # Initial SSE acknowledgement comment
+            yield f": connected to session {session_id}\n\n"
+
+            # 1. Replay historical events captured at registration
+            for evt in historical_events:
+                seen_event_ids.add(evt.event_id)
+                last_sent_id = evt.event_id
+                payload_json = json.dumps(evt.model_dump(mode="json"))
+                yield f"id: {evt.event_id}\nevent: {evt.event_type}\ndata: {payload_json}\n\n"
+
+            # 2. If follow is False or session is terminal, clean up and exit
+            if not follow or session.state in TERMINAL_STATES:
+                if session.state in TERMINAL_STATES:
+                    yield ": session ended\n\n"
+                return
+
+            # 3. Stream live events from the registered queue
             while True:
                 if await request.is_disconnected():
                     logger.info(f"SSE client disconnected from session {session_id}")
                     break
 
+                # Check if queue experienced buffer overflow
+                if await repository.has_overflowed(session_id, queue):
+                    logger.warning(f"SSE queue overflow observed for session {session_id}")
+                    overflow_payload = json.dumps({
+                        "warning": "Buffer overflow detected. Some live events were dropped.",
+                        "last_delivered_event_id": last_sent_id,
+                        "action": "Reconnect with Last-Event-ID to replay missing events.",
+                    })
+                    yield f"event: stream.overflow\ndata: {overflow_payload}\n\n"
+
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=1.0)
-                    # Deduplicate in case event was already replayed
-                    if event.event_id != last_sent_id:
+                    # Deduplicate in case event was present in historical slice
+                    if event.event_id not in seen_event_ids:
+                        seen_event_ids.add(event.event_id)
                         last_sent_id = event.event_id
                         payload_json = json.dumps(event.model_dump(mode="json"))
                         yield f"id: {event.event_id}\nevent: {event.event_type}\ndata: {payload_json}\n\n"
 
                     # If session reaches a terminal state, complete stream
-                    if event.event_type in ("session.stopped", "session.expired"):
+                    if event.event_type in ("session.stopped", "session.expired") or event.payload.get("new_state") in ("completed", "expired", "failed"):
                         yield ": session ended\n\n"
                         break
                 except asyncio.TimeoutError:
                     # Keep-alive heartbeat comment
                     yield ": ping\n\n"
+
         finally:
             await repository.unsubscribe_events(session_id, queue)
 
@@ -323,3 +345,63 @@ async def stream_session_events(
         "X-Accel-Buffering": "no",
     }
     return StreamingResponse(sse_generator(), media_type="text/event-stream", headers=headers)
+
+
+# ============================================================================
+# 5. CROSS-WORKSTREAM INTERACTION ENDPOINT (DAY 15-16, 21)
+# ============================================================================
+
+@router.post(
+    "/{session_id}/interact",
+    response_model=SessionInteractionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Cross-Workstream Voice Co-Pilot Interaction",
+    description="Runs the integration pipeline: Audio -> Transcription -> Context/Reasoning -> Workflow -> Session Events.",
+)
+async def process_session_interaction(
+    session_id: str,
+    payload: Optional[SessionInteractionRequest] = None,
+    service: SessionService = Depends(get_session_service),
+    coordinator: GatewayCoordinator = Depends(get_gateway_coordinator),
+) -> SessionInteractionResponse:
+    """Execute end-to-end integration flow within an active session."""
+    session = await service.get_session(session_id, check_expiry=True)
+    if session.state in TERMINAL_STATES:
+        raise InvalidStateTransitionError(
+            current_state=session.state.value,
+            target_state="active",
+            reason=f"Cannot interact in terminal session state '{session.state.value}'.",
+        )
+
+    req = payload or SessionInteractionRequest()
+    audio_chunk: Optional[AudioChunkData] = None
+
+    if req.audio_base64:
+        try:
+            raw_bytes = base64.b64decode(req.audio_base64)
+            audio_chunk = AudioChunkData(
+                data=raw_bytes,
+                sequence_number=1,
+                is_speech=True,
+                metadata={"source": "client_upload_base64"},
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to decode audio_base64 payload: {exc}")
+
+    result = await coordinator.process_interaction(
+        session_id=session_id,
+        user_query=req.user_query,
+        audio_chunk=audio_chunk,
+        workflow_goal=req.workflow_goal,
+        timeout_seconds=req.timeout_seconds,
+    )
+
+    return SessionInteractionResponse(
+        success=True,
+        session_id=session_id,
+        audio=result.audio_chunk.to_dict() if result.audio_chunk else None,
+        transcript=result.transcript.to_dict() if result.transcript else None,
+        reasoning=result.reasoning.to_dict() if result.reasoning else None,
+        workflow=result.workflow.to_dict() if result.workflow else None,
+        events_emitted=result.events_emitted,
+    )

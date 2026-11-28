@@ -45,6 +45,55 @@ class Settings(BaseSettings):
         description="Maximum allowed request payload size in bytes (default 1MB)",
     )
 
+    # Week 3 Module Gateway Configuration
+    audio_adapter_type: str = Field(
+        default="mock",
+        description="Audio gateway adapter type ('mock', 'w1', 'auto')",
+    )
+    transcription_adapter_type: str = Field(
+        default="mock",
+        description="Transcription gateway adapter type ('mock', 'w2', 'auto')",
+    )
+    reasoning_adapter_type: str = Field(
+        default="mock",
+        description="Reasoning gateway adapter type ('mock', 'w3', 'auto')",
+    )
+    workflow_adapter_type: str = Field(
+        default="mock",
+        description="Workflow gateway adapter type ('mock', 'w4', 'auto')",
+    )
+    gateway_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description="Default timeout in seconds for cross-module gateway operations",
+    )
+
+    # Week 3 Authorization Configuration
+    auth_enabled: bool = Field(
+        default=False,
+        description="Whether authorization is enforced on protected endpoints",
+    )
+    auth_token: Optional[str] = Field(
+        default=None,
+        description="Preshared token/API key for local authorization",
+    )
+
+    # Week 3 Rate Limiting Configuration
+    rate_limit_enabled: bool = Field(
+        default=True,
+        description="Whether client request rate limiting is enforced",
+    )
+    rate_limit_requests: int = Field(
+        default=100,
+        gt=0,
+        description="Maximum requests allowed within the rate limit window",
+    )
+    rate_limit_window_seconds: int = Field(
+        default=60,
+        gt=0,
+        description="Sliding rate limit window in seconds",
+    )
+
     # Production Credentials (Optional in mock mode; mandatory in production)
     ai_service_api_key: Optional[str] = Field(
         default=None,
@@ -76,6 +125,26 @@ class Settings(BaseSettings):
                 f"Invalid max payload size: {self.max_payload_size_bytes}. Size must be greater than 0."
             )
 
+        if self.gateway_timeout_seconds <= 0:
+            raise ConfigurationError(
+                f"Invalid gateway timeout: {self.gateway_timeout_seconds}. Timeout must be greater than 0."
+            )
+
+        if self.auth_enabled and not self.auth_token:
+            raise ConfigurationError(
+                "Authentication is enabled (auth_enabled=True) but 'auth_token' is not configured."
+            )
+
+        if self.rate_limit_requests <= 0:
+            raise ConfigurationError(
+                f"Invalid rate limit requests: {self.rate_limit_requests}. Requests must be greater than 0."
+            )
+
+        if self.rate_limit_window_seconds <= 0:
+            raise ConfigurationError(
+                f"Invalid rate limit window: {self.rate_limit_window_seconds}. Window must be greater than 0."
+            )
+
         # In production mode, required secrets and dependencies must be configured
         if not self.mock_mode:
             missing = []
@@ -97,7 +166,7 @@ class Settings(BaseSettings):
     def safe_dict(self) -> Dict[str, Any]:
         """Return configuration dictionary with sensitive secrets masked."""
         data = self.model_dump()
-        sensitive_keys = {"ai_service_api_key", "database_url"}
+        sensitive_keys = {"ai_service_api_key", "database_url", "auth_token"}
         for key in sensitive_keys:
             if data.get(key):
                 val = str(data[key])
