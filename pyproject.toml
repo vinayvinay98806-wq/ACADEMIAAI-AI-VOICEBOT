@@ -15,5 +15,3 @@ audio-demo = "academiaai.audio.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-[tool.setuptools.package-data]
-w3_context_reasoning = ["prompts/v1/*.txt", "prompts/v1/*.json"]
