@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "name": "Academic Voice Co-Pilot Baseline Prompt",
+  "author": "W3 Context & Reasoning Team",
+  "created_at": "2026-10-28",
+  "description": "Baseline v1 prompt template separating trusted system instructions from untrusted user and retrieved context.",
+  "required_variables": [
+    "user_query"
+  ],
+  "optional_variables": [
+    "context_items",
+    "source_references",
+    "screen_context"
+  ],
+  "safety_delimiters": {
+    "system_block": "trusted_system_instruction",
+    "query_block": "untrusted_student_query",
+    "screen_block": "untrusted_screen_context",
+    "context_block": "untrusted_retrieved_context"
+  }
+}
