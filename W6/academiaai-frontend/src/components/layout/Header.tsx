@@ -32,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="brand-title-row">
             <h1 className="brand-title">AcademiaAI</h1>
             <span className="brand-badge">Voice Co-Pilot</span>
-            <span className="brand-tag">Work 6: Frontend & UX (Week 2)</span>
+            <span className="brand-tag">Work 6: Frontend & UX (Week 3)</span>
           </div>
           <p className="brand-sub">Active Context: CS 685 — Deep Learning & NLP (Prof. Reynolds)</p>
         </div>

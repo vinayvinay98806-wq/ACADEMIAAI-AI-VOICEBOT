@@ -37,7 +37,15 @@ export interface TranscriptItem {
   isRevision?: boolean; // Flash highlight on update
 }
 
-export type StepStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type StepStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'awaiting_approval'
+  | 'rejected'
+  | 'cancelled'
+  | 'skipped';
 
 export interface WorkflowStep {
   id: string;
@@ -46,13 +54,27 @@ export interface WorkflowStep {
   status: StepStatus;
   duration?: string;
   errorDetails?: string;
+  toolName?: string;
+  isConsequential?: boolean;
 }
+
+export type WorkflowStatus =
+  | 'draft'
+  | 'idle'
+  | 'in-progress'
+  | 'running'
+  | 'awaiting_approval'
+  | 'completed'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'paused';
 
 export interface Workflow {
   id: string;
   title: string;
   category: string;
-  status: 'idle' | 'in-progress' | 'completed' | 'failed';
+  status: WorkflowStatus;
   currentStepIndex: number;
   steps: WorkflowStep[];
 }
@@ -70,6 +92,9 @@ export interface SensitiveAction {
   status: 'pending' | 'approved' | 'rejected';
   timestamp: string;
   decisionNote?: string;
+  requestId?: string;
+  workflowId?: string;
+  stepId?: string;
 }
 
 export interface SystemNotification {
@@ -131,4 +156,54 @@ export interface ErrorState {
   code?: string;
   timestamp: string;
   retryAction?: () => void;
+}
+
+/**
+ * Backend Event stream contracts aligned with W5 SessionEvent and W4 Workflow contracts.
+ */
+export type BackendEventType =
+  | 'session.started'
+  | 'session.state_changed'
+  | 'stt.transcript_segment'
+  | 'workflow.step_updated'
+  | 'workflow.approval_requested'
+  | 'workflow.approval_decided'
+  | 'context.screen_updated'
+  | 'system.heartbeat';
+
+export interface BackendEvent<T = Record<string, unknown>> {
+  event_id: string;
+  session_id: string;
+  event_type: BackendEventType | string;
+  payload: T;
+  timestamp: string; // ISO 8601 string
+}
+
+export interface StreamSubscriptionOptions {
+  sinceEventId?: string;
+  onEvent: (event: BackendEvent) => void;
+  onError?: (error: Error) => void;
+  onStatusChange?: (status: ConnectionStatus) => void;
+  maxBackoffMs?: number;
+  initialBackoffMs?: number;
+}
+
+export interface BackendApprovalRequest {
+  request_id: string;
+  workflow_id: string;
+  step_id: string;
+  tool_name: string;
+  action_description: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requested_at: string;
+  decided_at?: string;
+  decision_reason?: string;
+}
+
+export interface ApprovalDecisionPayload {
+  request_id: string;
+  action_id?: string;
+  decision: 'APPROVED' | 'REJECTED';
+  decision_reason?: string;
+  timestamp: string;
 }

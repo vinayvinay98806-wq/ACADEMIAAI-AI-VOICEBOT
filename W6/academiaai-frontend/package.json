@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "demo": "node scripts/demo_week2.js",
+    "demo:week3": "node scripts/demo_week3.js",
     "preview": "vite preview"
   },
   "dependencies": {

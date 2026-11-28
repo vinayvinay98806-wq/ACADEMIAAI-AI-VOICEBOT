@@ -6,12 +6,14 @@ import type {
   PrivacyScope,
   TranscriptItem,
   Workflow,
+  StepStatus,
   SensitiveAction,
   SystemNotification,
   ScreenContextData,
   AcademicSourceReference,
   MicrophoneCaptureStatus,
   ErrorState,
+  BackendEvent,
 } from '../types/copilot';
 import {
   INITIAL_TRANSCRIPTS,
@@ -25,6 +27,7 @@ import { copilotApi } from '../api/copilotApi';
 
 export function useVoiceCopilot() {
   // Voice & Session States (Week 2 Day 8-9: includes 'paused')
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connected');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -40,6 +43,7 @@ export function useVoiceCopilot() {
   // Transcript items (Week 2 Day 10-11: supports interim & final revisions)
   const [transcripts, setTranscripts] = useState<TranscriptItem[]>(INITIAL_TRANSCRIPTS);
   const activeStreamCancelRef = useRef<(() => void) | null>(null);
+  const eventUnsubscribeRef = useRef<(() => void) | null>(null);
 
   // Workflows & Sensitive Actions (HITL)
   const [workflows, setWorkflows] = useState<Workflow[]>(INITIAL_WORKFLOWS);
@@ -153,6 +157,242 @@ export function useVoiceCopilot() {
     }, 650);
     return () => clearTimeout(timer);
   }, [transcripts]);
+
+  // Backend Event Handler for Live Replay & Progress Tracking
+  const handleBackendEvent = useCallback(
+    (event: BackendEvent) => {
+      switch (event.event_type) {
+        case 'session.started': {
+          setConnectionStatus('connected');
+          break;
+        }
+        case 'session.state_changed': {
+          const payload = event.payload as { new_state?: string };
+          if (payload?.new_state === 'paused') {
+            setVoiceState('paused');
+            setRawAudioLevel(0);
+          } else if (payload?.new_state === 'active') {
+            setVoiceState('listening');
+          } else if (payload?.new_state === 'completed' || payload?.new_state === 'failed') {
+            setVoiceState('idle');
+            setRawAudioLevel(0);
+          }
+          break;
+        }
+        case 'stt.transcript_segment': {
+          const payload = event.payload as unknown as TranscriptItem;
+          if (payload && payload.id && payload.text) {
+            addOrUpdateTranscriptSegment(payload);
+          }
+          break;
+        }
+        case 'workflow.step_updated': {
+          const payload = event.payload as {
+            workflow_id?: string;
+            step_id?: string;
+            status?: StepStatus;
+            duration?: string;
+            error_details?: string;
+          };
+          if (payload?.workflow_id && payload?.step_id && payload?.status) {
+            setWorkflows((prev) =>
+              prev.map((wf) => {
+                if (wf.id !== payload.workflow_id) return wf;
+                const nextSteps = wf.steps.map((st) =>
+                  st.id === payload.step_id
+                    ? {
+                        ...st,
+                        status: payload.status!,
+                        duration: payload.duration ?? st.duration,
+                        errorDetails: payload.error_details ?? st.errorDetails,
+                      }
+                    : st
+                );
+                const anyFailed = nextSteps.some((s) => s.status === 'failed' || s.status === 'rejected');
+                const anyAwaiting = nextSteps.some((s) => s.status === 'awaiting_approval');
+                const allCompleted = nextSteps.every((s) => s.status === 'completed');
+                const newStatus = anyFailed
+                  ? 'failed'
+                  : anyAwaiting
+                  ? 'awaiting_approval'
+                  : allCompleted
+                  ? 'completed'
+                  : 'in-progress';
+                return {
+                  ...wf,
+                  status: newStatus,
+                  steps: nextSteps,
+                };
+              })
+            );
+          }
+          break;
+        }
+        case 'workflow.approval_requested': {
+          const payload = event.payload as {
+            request_id: string;
+            workflow_id: string;
+            step_id: string;
+            action_title?: string;
+            action_description?: string;
+            impact?: string;
+            risk_level?: 'low' | 'medium' | 'high';
+            tool_name?: string;
+          };
+          if (payload?.request_id) {
+            const actionItem: SensitiveAction = {
+              id: payload.request_id,
+              requestId: payload.request_id,
+              workflowId: payload.workflow_id,
+              stepId: payload.step_id,
+              title: payload.action_title || `Execute ${payload.tool_name || 'Sensitive Action'}`,
+              description: payload.action_description || 'Action requires operator approval.',
+              impact: payload.impact || 'Human-in-the-loop review safeguard enforced.',
+              riskLevel: payload.risk_level || 'high',
+              targetSystem: payload.tool_name || 'Execution Gateway',
+              parameters: {},
+              status: 'pending',
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            };
+            setSensitiveActions((prev) => {
+              const exists = prev.some((a) => a.id === actionItem.id);
+              return exists ? prev.map((a) => (a.id === actionItem.id ? actionItem : a)) : [actionItem, ...prev];
+            });
+            setSelectedAction(actionItem);
+            if (payload.workflow_id && payload.step_id) {
+              setWorkflows((prev) =>
+                prev.map((wf) => {
+                  if (wf.id !== payload.workflow_id) return wf;
+                  return {
+                    ...wf,
+                    status: 'awaiting_approval',
+                    steps: wf.steps.map((st) =>
+                      st.id === payload.step_id ? { ...st, status: 'awaiting_approval' as const } : st
+                    ),
+                  };
+                })
+              );
+            }
+            addNotification(
+              'warning',
+              'Human Review Required',
+              `Action "${actionItem.title}" requires explicit authorization before execution.`
+            );
+          }
+          break;
+        }
+        case 'workflow.approval_decided': {
+          const payload = event.payload as {
+            request_id?: string;
+            action_id?: string;
+            decision?: 'APPROVED' | 'REJECTED';
+            decision_reason?: string;
+          };
+          const id = payload?.action_id || payload?.request_id;
+          if (id) {
+            const isRejected = payload.decision === 'REJECTED';
+            setSensitiveActions((prev) =>
+              prev.map((act) =>
+                act.id === id || act.requestId === id
+                  ? {
+                      ...act,
+                      status: isRejected ? 'rejected' : 'approved',
+                      decisionNote: payload.decision_reason,
+                    }
+                  : act
+              )
+            );
+          }
+          break;
+        }
+        case 'context.screen_updated': {
+          const payload = event.payload as { capture_enabled?: boolean };
+          if (typeof payload?.capture_enabled === 'boolean') {
+            setScreenContext((prev) => ({
+              ...prev,
+              captureEnabled: payload.capture_enabled!,
+              permission: payload.capture_enabled ? 'granted' : 'not-requested',
+            }));
+            setScreenShareStatus(payload.capture_enabled ? 'active' : 'disabled');
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [addOrUpdateTranscriptSegment, addNotification]
+  );
+
+  // Subscribe to real-time events for active session
+  const subscribeSession = useCallback(
+    (sessId: string) => {
+      if (eventUnsubscribeRef.current) {
+        eventUnsubscribeRef.current();
+        eventUnsubscribeRef.current = null;
+      }
+      const unsubscribe = copilotApi.subscribeToEvents(sessId, {
+        onEvent: (event: BackendEvent) => {
+          handleBackendEvent(event);
+        },
+        onStatusChange: (status: ConnectionStatus) => {
+          setConnectionStatus(status);
+          if (status === 'reconnecting') {
+            addNotification(
+              'warning',
+              'Connection Interrupted',
+              'Reconnecting with exponential backoff and cursor replay...'
+            );
+          } else if (status === 'connected') {
+            setErrorState(null);
+          }
+        },
+        onError: (err: Error) => {
+          setErrorState({
+            hasError: true,
+            message: err.message,
+            code: 'EVENT_STREAM_ERROR',
+            timestamp: new Date().toLocaleTimeString(),
+            retryAction: () => reconnect(),
+          });
+        },
+      });
+      eventUnsubscribeRef.current = unsubscribe;
+    },
+    [handleBackendEvent, addNotification]
+  );
+
+  // Initial session startup
+  useEffect(() => {
+    let mounted = true;
+    copilotApi
+      .createSession()
+      .then(({ sessionId: newId }) => {
+        if (!mounted) return;
+        setSessionId(newId);
+        subscribeSession(newId);
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        const msg = err instanceof Error ? err.message : 'Session initialization failed';
+        setConnectionStatus('offline');
+        setErrorState({
+          hasError: true,
+          message: msg,
+          code: 'SESSION_INIT_FAILED',
+          timestamp: new Date().toLocaleTimeString(),
+          retryAction: () => reconnect(),
+        });
+      });
+
+    return () => {
+      mounted = false;
+      if (eventUnsubscribeRef.current) {
+        eventUnsubscribeRef.current();
+        eventUnsubscribeRef.current = null;
+      }
+    };
+  }, [subscribeSession]);
 
   // Voice Controls: Start, Pause, Resume, Stop
   const startListening = useCallback(() => {
@@ -275,7 +515,34 @@ export function useVoiceCopilot() {
             if (triggersAction) {
               const canvasAction = sensitiveActions.find((a) => a.id === 'act-101');
               if (canvasAction) {
-                setSelectedAction(canvasAction);
+                const enrichedAction: SensitiveAction = {
+                  ...canvasAction,
+                  requestId: 'req-canvas-101',
+                  workflowId: 'wf-1',
+                  stepId: 's4',
+                };
+                setSelectedAction(enrichedAction);
+                setSensitiveActions((prev) =>
+                  prev.map((a) => (a.id === 'act-101' ? enrichedAction : a))
+                );
+                setWorkflows((prev) =>
+                  prev.map((wf) => {
+                    if (wf.id !== 'wf-1') return wf;
+                    return {
+                      ...wf,
+                      status: 'awaiting_approval',
+                      steps: wf.steps.map((st) =>
+                        st.id === 's4'
+                          ? {
+                              ...st,
+                              status: 'awaiting_approval' as const,
+                              description: 'Awaiting human authorization for Canvas submission',
+                            }
+                          : st
+                      ),
+                    };
+                  })
+                );
               }
             }
 
@@ -397,43 +664,102 @@ export function useVoiceCopilot() {
     [addNotification]
   );
 
-  // Sensitive Actions (HITL Approval / Rejection)
+  // Sensitive Actions (HITL Approval / Rejection with Dedicated Safety)
   const approveAction = useCallback(
-    (actionId: string, note?: string) => {
-      setSensitiveActions((prev) =>
-        prev.map((act) =>
-          act.id === actionId
-            ? { ...act, status: 'approved', decisionNote: note || 'Approved by user via dashboard' }
-            : act
-        )
-      );
-      setSelectedAction(null);
-      addNotification(
-        'success',
-        'Action Approved',
-        `Authorized execution for "${sensitiveActions.find((a) => a.id === actionId)?.title || actionId}". Gateway dispatched.`
-      );
+    async (actionId: string, note?: string) => {
+      const act = sensitiveActions.find((a) => a.id === actionId);
+      const reqId = act?.requestId || `req-${actionId}`;
+      setIsLoading(true);
+      try {
+        await copilotApi.submitApproval(reqId, actionId, note);
+        setSensitiveActions((prev) =>
+          prev.map((a) =>
+            a.id === actionId
+              ? { ...a, status: 'approved', decisionNote: note || 'Approved by user via dashboard' }
+              : a
+          )
+        );
+        if (act?.workflowId && act?.stepId) {
+          setWorkflows((prev) =>
+            prev.map((wf) => {
+              if (wf.id !== act.workflowId) return wf;
+              return {
+                ...wf,
+                status: 'in-progress',
+                steps: wf.steps.map((st) =>
+                  st.id === act.stepId ? { ...st, status: 'running' as const } : st
+                ),
+              };
+            })
+          );
+        }
+        setSelectedAction(null);
+        addNotification(
+          'success',
+          'Action Approved',
+          `Authorized execution for "${act?.title || actionId}". Gateway dispatched.`
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Approval submission error';
+        addNotification('error', 'Approval Error', msg);
+      } finally {
+        setIsLoading(false);
+      }
     },
     [sensitiveActions, addNotification]
   );
 
   const rejectAction = useCallback(
-    (actionId: string, reason: string) => {
-      setSensitiveActions((prev) =>
-        prev.map((act) =>
-          act.id === actionId
-            ? { ...act, status: 'rejected', decisionNote: reason || 'Rejected by user' }
-            : act
-        )
-      );
-      setSelectedAction(null);
-      addNotification(
-        'warning',
-        'Action Blocked / Rejected',
-        `Sensitive action blocked. Reason: ${reason || 'Denied by reviewer.'}`
-      );
+    async (actionId: string, reason: string) => {
+      const act = sensitiveActions.find((a) => a.id === actionId);
+      const reqId = act?.requestId || `req-${actionId}`;
+      setIsLoading(true);
+      try {
+        // CRITICAL SAFETY REQUIREMENT:
+        // Dedicated rejection path, NEVER triggers tool execution or approval!
+        await copilotApi.submitRejection(reqId, actionId, reason);
+        setSensitiveActions((prev) =>
+          prev.map((a) =>
+            a.id === actionId
+              ? { ...a, status: 'rejected', decisionNote: reason || 'Rejected by user' }
+              : a
+          )
+        );
+        // Step is strictly marked as rejected/cancelled and workflow fails safely
+        if (act?.workflowId && act?.stepId) {
+          setWorkflows((prev) =>
+            prev.map((wf) => {
+              if (wf.id !== act.workflowId) return wf;
+              return {
+                ...wf,
+                status: 'failed',
+                steps: wf.steps.map((st) =>
+                  st.id === act.stepId
+                    ? {
+                        ...st,
+                        status: 'rejected' as const,
+                        errorDetails: `Execution blocked: Action rejected by human operator (${reason || 'Denied'})`,
+                      }
+                    : st
+                ),
+              };
+            })
+          );
+        }
+        setSelectedAction(null);
+        addNotification(
+          'warning',
+          'Action Blocked / Rejected',
+          `Sensitive action blocked. Tool execution safely prevented. Reason: ${reason || 'Denied by reviewer.'}`
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Rejection submission error';
+        addNotification('error', 'Rejection Error', msg);
+      } finally {
+        setIsLoading(false);
+      }
     },
-    [addNotification]
+    [sensitiveActions, addNotification]
   );
 
   // Connection toggle (for testing offline/error states)
@@ -477,13 +803,17 @@ export function useVoiceCopilot() {
 
   const reconnect = useCallback(() => {
     setIsLoading(true);
+    setConnectionStatus('reconnecting');
+
     setTimeout(() => {
       setConnectionStatus('connected');
       setErrorState(null);
       setIsLoading(false);
-      addNotification('success', 'Reconnected Successfully', 'Live audio pipeline and STT gateway restored.');
+      addNotification('success', 'Reconnected Successfully', 'Live event stream restored. Missed events replayed.');
+      const currentId = sessionId || copilotApi.getSessionId() || 'mock-sess-reconnected';
+      subscribeSession(currentId);
     }, 800);
-  }, [addNotification]);
+  }, [sessionId, subscribeSession, addNotification]);
 
   const clearTranscripts = useCallback(() => {
     setTranscripts([]);
@@ -502,6 +832,7 @@ export function useVoiceCopilot() {
   };
 
   return {
+    sessionId,
     voiceState,
     audioLevel,
     startListening,

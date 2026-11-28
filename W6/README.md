@@ -1,43 +1,60 @@
 # AcademiaAI AI Voice Co-Pilot
-## Worker 6 (W6): Frontend & UX — Week 2 Implementation
+## Worker 6 (W6): Frontend & UX — Week 3 Implementation
 
-This directory contains the **Week 2** frontend and user experience implementation for **Worker 6 (W6)** of the AcademiaAI AI Voice Co-Pilot project.
+This directory contains the **Week 3** frontend, backend integration, and workflow UX implementation for **Worker 6 (W6)** of the AcademiaAI AI Voice Co-Pilot project.
 
 ---
 
-### Week 2 Objectives & Capabilities Delivered
+### Week 3 Objectives & Deliverables
 
-1. **Pause and Resume Controls (Days 8–9):**
-   - Active voice session supports seamless **Pause** and **Resume** transitions (`idle` → `listening` → `paused` → `listening` → `idle`).
-   - Pausing halts audio streaming capture while preserving session continuity, transcript history, and active timer state.
-   - Guarded against accidental termination during pause.
+1. **Live Backend Integration (Client & Session Lifecycle):**
+   - Implemented `LiveBackendClient` (`src/api/liveBackendClient.ts`) connecting the frontend directly to the W5 FastAPI session state machine (`/sessions/mock`, `/sessions/{id}`, `/sessions/{id}/transition`, `/sessions/{id}/events`).
+   - Environment-based configuration via `VITE_API_BASE_URL` (default `http://localhost:8000`) and `VITE_USE_MOCK` (default `true` for standalone sandbox execution).
+   - Session lifecycle handling: initialization, transitions (`active`, `paused`, `completed`, `failed`), and state synchronization.
 
-2. **Visible Capture State Indicators (Days 8–9):**
-   - **Microphone Capture Indicator:** Displays live capture status (`LIVE`, `PAUSED`, `STANDBY`), hardware format (PCM 16kHz Mono), and real-time audio input level percentage.
-   - **Screen-Context Capture Indicator:** Clearly indicates visual context status (`OFF (DEFAULT)` vs `ACTIVE (MOCK)`), with a direct toggle action.
+2. **Reconnection with Exponential Backoff & Cursor-Based Event Replay:**
+   - Real-time event stream subscription (`subscribeToEvents`).
+   - Disconnection detection switching status to `reconnecting`.
+   - Automatic reconnect with controlled exponential backoff (`calculateExponentialBackoff(attempt, initialMs=500, maxMs=8000)`) with bounded jitter.
+   - Cursor-based tracking of `lastEventId`.
+   - On reconnect, requests missed events since cursor (`GET /sessions/{sessionId}/events?since_id={lastEventId}`).
+   - Guarantees strict in-order chronological dispatch and **zero duplicate events** via `seenEventIds: Set<string>`.
+   - Subscription cleanup on unmount or session teardown.
 
-3. **Loading, Offline, and Error States (Days 8–9):**
-   - **Loading State:** Dedicated synthesis spinner, skeleton placeholder, and accessible `aria-busy` feedback.
-   - **Offline Resilience:** Header and panel-level offline banners with one-click **Reconnect** action that restores WebSocket streaming without losing session state.
-   - **Error Handling:** Structured error notifications with retry actions.
+3. **Live Workflow Progress View:**
+   - Displays all workflow steps supplied by the backend.
+   - Fully supports all backend statuses:
+     - `pending`
+     - `running` (with active spinner and step badge)
+     - `completed` (with checkmark and duration)
+     - `failed` (with failure explanation and retry button)
+     - `awaiting_approval` (with human review alert notice)
+     - `rejected` (with execution blocked notice)
+     - `cancelled` (with cancellation tag)
+     - `skipped`
+   - Dynamically highlights active step and supports workflows with variable/dynamic numbers of steps.
 
-4. **Live Transcript Segments with Interim & Final Revisions (Days 10–11):**
-   - Implements speech-to-text contract aligned with W2 `TranscriptSegment` schema.
-   - Distinguishes **Interim** provisional segments (pulsing indicator, dashed boundary, italicized hypothesis) from **Final** confirmed segments (solid boundary, high contrast, confirmed tag).
-   - **In-Place Segment Revisions:** When a revised or final transcript arrives with a matching stable `id`, the corresponding segment updates in-place with a revision counter (`rev 2`), strictly eliminating duplicate segments.
-   - **Confidence Score Formatting:** Dynamic color-coded pill (`High: >=90%`, `Medium: 75–89%`, `Low: <75%`).
-   - Diarized speaker labels and stream inception timestamps (`+0.0s`).
+4. **Safe Human-in-the-Loop Approval & Rejection Dialog:**
+   - Modal displays: action title, description, risk level pill, impact warning, parameters table, execution safety guarantee, and decision note input.
+   - **CRITICAL SAFETY GUARANTEE:**
+     - Rejecting an action strictly calls the dedicated rejection endpoint (`submitRejection`), **NEVER** calling the execution target or approval endpoint!
+     - Rejected actions remain rejected and mark the workflow step as `rejected`/`blocked`.
+     - Duplicate submissions are prevented by disabling all buttons while a submission is in-flight.
+     - Rejection failures and network errors are displayed in a structured alert banner.
+     - Full keyboard accessibility: focus trapping within the dialog and `Escape` key dismissal.
 
-5. **Context and Source Grounding Panel (Days 12–13):**
-   - **Screen Context strictly OFF by default:** Guarantees zero unconfirmed visual capture or privacy leakage.
-   - Explicit **ON/OFF** user control with clear permission indicator.
-   - **Synthetic Demo Fixtures:** Transparently marks mock visual frames (`frame-fixture-014`, Lecture 7 Slide 14 OCR) to prevent false claims of live desktop recording.
-   - **Grounded Academic Sources:** Ingests W3 `SourceReference` contracts (e.g. Vaswani et al. 2017 Attention paper, Course Syllabus Module 4, Lecture Slides) with relevance match percentages.
-   - **Academic Privacy Shield:** Client-side sanitization masking confidential student IDs, grades, and credential tokens.
+5. **Privacy Controls & Capture State Indicators:**
+   - **Screen Context strictly OFF by default:** Zero visual frames ingested until explicit user action.
+   - Visible ON/OFF toggle with immediate visual feedback and permission status.
+   - Transparently distinguishes synthetic demonstration fixtures (`Slide 14 OCR`) from live hardware.
+   - Privacy Shield active masking student PII.
 
-6. **Automated UI Testing & Demonstration (Day 14):**
-   - Comprehensive Vitest + React Testing Library test suite (`27 tests across 5 test suites`).
-   - Mock-backend demonstration script (`scripts/demo_week2.js`).
+6. **Comprehensive Automated Test Suite:**
+   - 48 automated tests across 9 test suites using Vitest and React Testing Library.
+   - 100% test pass rate covering client integration, reconnect/replay, workflow UX, and approval safety.
+
+7. **Working Mock Backend Demonstration:**
+   - Interactive CLI demonstration script (`scripts/demo_week3.js` / `npm run demo:week3`).
 
 ---
 
@@ -48,39 +65,54 @@ W6/
 ├── academiaai-frontend/
 │   ├── public/
 │   ├── scripts/
-│   │   └── demo_week2.js                 # Terminal mock-backend demonstration
+│   │   ├── demo_week2.js                 # Week 2 Terminal demonstration
+│   │   └── demo_week3.js                 # Week 3 Live Backend & Workflow demonstration
 │   ├── src/
-│   │   ├── __tests__/                     # Vitest + RTL UI test suite
-│   │   │   ├── ContextSourcePanel.test.tsx
-│   │   │   ├── HeaderAndAlerts.test.tsx
-│   │   │   ├── TranscriptPanel.test.tsx
-│   │   │   ├── VoiceControlPanel.test.tsx
-│   │   │   └── useVoiceCopilot.test.ts
+│   │   ├── __tests__/                     # Vitest + RTL test suites (48 passing tests)
+│   │   │   ├── ApprovalSafety.test.tsx    # Proves rejection execution safety
+│   │   │   ├── ContextSourcePanel.test.tsx# Tests privacy controls (OFF by default)
+│   │   │   ├── HeaderAndAlerts.test.tsx   # Tests top header & alerts
+│   │   │   ├── LiveBackendIntegration.test.ts # Tests client & session contract sync
+│   │   │   ├── ReconnectionAndReplay.test.ts # Tests backoff, cursor replay & deduplication
+│   │   │   ├── TranscriptPanel.test.tsx   # Tests live interim/final transcripts
+│   │   │   ├── VoiceControlPanel.test.tsx # Tests voice controls & capture badges
+│   │   │   ├── WorkflowUX.test.tsx        # Tests workflow view across all 8 statuses
+│   │   │   └── useVoiceCopilot.test.ts    # Tests copilot state transitions
 │   │   ├── api/
-│   │   │   └── copilotApi.ts             # Typed API client with W5/W2/W3 mock contracts
+│   │   │   ├── copilotApi.ts              # Typed API facade
+│   │   │   └── liveBackendClient.ts       # Live backend client & replay engine
 │   │   ├── components/
-│   │   │   ├── approval/                 # HITL sensitive action approval modals
-│   │   │   ├── context/                  # Week 2 Context & Grounded Source Panel
-│   │   │   │   └── ContextSourcePanel.tsx
-│   │   │   ├── layout/                   # Header bar, Alert banner stack
-│   │   │   ├── privacy/                  # Scope selector & privacy shield
-│   │   │   ├── transcript/               # Live transcripts & AI synthesis cards
-│   │   │   ├── voice/                    # Voice controls & animated audio waveform
-│   │   │   └── workflow/                 # Agentic workflow step tracker
+│   │   │   ├── approval/
+│   │   │   │   ├── ActionApprovalModal.tsx # Safe approval/rejection modal
+│   │   │   │   └── PendingActionsList.tsx  # HITL sensitive actions & audit trail
+│   │   │   ├── context/
+│   │   │   │   └── ContextSourcePanel.tsx  # Grounded context & privacy controls
+│   │   │   ├── layout/
+│   │   │   │   ├── AlertBanner.tsx         # Notification toast stack
+│   │   │   │   └── Header.tsx              # Brand header & connection status
+│   │   │   ├── privacy/
+│   │   │   │   └── PrivacyPanel.tsx        # Privacy scope & shield toggle
+│   │   │   ├── transcript/
+│   │   │   │   ├── AIResponsePanel.tsx     # Grounded AI synthesis output
+│   │   │   │   └── TranscriptPanel.tsx     # In-place interim/final transcript view
+│   │   │   ├── voice/
+│   │   │   │   ├── AudioWaveform.tsx       # Live capture waveform animation
+│   │   │   │   └── VoiceControlPanel.tsx   # Session Start, Pause, Resume, Stop
+│   │   │   └── workflow/
+│   │   │       └── WorkflowTracker.tsx     # Live workflow pipeline progress view
 │   │   ├── hooks/
-│   │   │   └── useVoiceCopilot.ts        # Central copilot state management hook
+│   │   │   └── useVoiceCopilot.ts         # Central copilot state management hook
 │   │   ├── mock/
-│   │   │   └── mockData.ts               # Grounded academic fixtures & contracts
+│   │   │   └── mockData.ts                # Grounded academic fixtures & contracts
 │   │   ├── styles/
-│   │   │   └── dashboard.css             # Dark-mode dashboard theme & animations
+│   │   │   └── dashboard.css              # Glassmorphic dark dashboard theme
 │   │   ├── test/
-│   │   │   └── setup.ts                  # Jest-DOM matchers setup for Vitest
+│   │   │   └── setup.ts                   # Jest-DOM matchers setup for Vitest
 │   │   ├── types/
-│   │   │   └── copilot.ts                # TypeScript schemas for frontend
-│   │   ├── App.tsx
-│   │   └── main.tsx
+│   │   │   └── copilot.ts                 # TypeScript schemas & backend event contracts
+│   │   ├── App.tsx                        # Main 3-column responsive dashboard
+│   │   └── main.tsx                       # React 19 application entrypoint
 │   ├── package.json
-│   ├── tsconfig.json
 │   └── vite.config.ts
 ├── README.md
 └── PULL_REQUEST.md
@@ -88,40 +120,28 @@ W6/
 
 ---
 
-### Getting Started & Verification Commands
+### Startup & Demonstration Commands
 
-All commands are run from the `academiaai-frontend` directory:
-
-```powershell
+#### 1. Run the Automated Test Suite (All 9 Suites / 48 Tests):
+```bash
 cd academiaai-frontend
-```
-
-#### 1. Running Unit & UI Tests
-Execute the complete automated test suite (all 27 tests):
-```powershell
 npm test
 ```
 
-#### 2. Running the Mock Backend Demonstration
-Run the end-to-end simulated demonstration script showcasing all Week 2 behaviors:
-```powershell
-npm run demo
+#### 2. Run the Week 3 Mock Backend Demonstration:
+```bash
+cd academiaai-frontend
+npm run demo:week3
 ```
 
-#### 3. Building for Production
-Verify compilation and bundle generation:
-```powershell
-npm run build
-```
-
-#### 4. Running Code Linter
-Verify code style and rules of hooks:
-```powershell
-npm run lint
-```
-
-#### 5. Starting the Local Development Server
-Launch the interactive web application in mock mode:
-```powershell
+#### 3. Run the Development Server (Interactive UI):
+```bash
+cd academiaai-frontend
 npm run dev
+```
+
+#### 4. Build Production Bundle:
+```bash
+cd academiaai-frontend
+npm run build
 ```
