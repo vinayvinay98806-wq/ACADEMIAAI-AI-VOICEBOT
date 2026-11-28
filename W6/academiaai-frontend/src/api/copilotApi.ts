@@ -11,11 +11,21 @@ import type {
   TranscriptItem,
   ScreenContextData,
   AcademicSourceReference,
+  StreamSubscriptionOptions,
+  ApprovalDecisionPayload,
 } from '../types/copilot';
 import {
   INITIAL_SCREEN_CONTEXT,
   INITIAL_ACADEMIC_SOURCES,
 } from '../mock/mockData';
+import {
+  liveBackendClient,
+  LiveBackendClient,
+  BackendIntegrationError,
+  calculateExponentialBackoff,
+} from './liveBackendClient';
+
+export { liveBackendClient, LiveBackendClient, BackendIntegrationError, calculateExponentialBackoff };
 
 export interface ApiClientConfig {
   baseUrl?: string;
@@ -256,6 +266,38 @@ export class CopilotApiClient {
       cancelled = true;
       clearInterval(interval);
     };
+  }
+
+  /**
+   * Subscribes to real-time session event stream with replay & backoff.
+   */
+  public subscribeToEvents(
+    sessionId: string,
+    options: StreamSubscriptionOptions
+  ): () => void {
+    return liveBackendClient.subscribeToEvents(sessionId, options);
+  }
+
+  /**
+   * Submits explicit human-in-the-loop approval.
+   */
+  public async submitApproval(
+    requestId: string,
+    actionId: string,
+    note?: string
+  ): Promise<ApprovalDecisionPayload> {
+    return liveBackendClient.submitApproval(requestId, actionId, note);
+  }
+
+  /**
+   * CRITICAL SAFETY: Submits rejection, strictly preventing execution.
+   */
+  public async submitRejection(
+    requestId: string,
+    actionId: string,
+    reason?: string
+  ): Promise<ApprovalDecisionPayload> {
+    return liveBackendClient.submitRejection(requestId, actionId, reason);
   }
 }
 

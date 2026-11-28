@@ -1288,6 +1288,24 @@ input:focus-visible {
   color: #f43f5e;
 }
 
+.step-item.status-awaiting_approval .step-marker {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.step-item.status-rejected .step-marker {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #f87171;
+}
+
+.step-item.status-cancelled .step-marker {
+  background: rgba(100, 116, 139, 0.2);
+  border-color: #64748b;
+  color: #94a3b8;
+}
+
 .step-bullet {
   width: 6px;
   height: 6px;
@@ -1359,6 +1377,93 @@ input:focus-visible {
 .tag-pending {
   background: rgba(148, 163, 184, 0.1);
   color: #94a3b8;
+}
+.tag-awaiting_approval {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.tag-rejected {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+.tag-cancelled {
+  background: rgba(100, 116, 139, 0.2);
+  color: #94a3b8;
+}
+.tag-skipped {
+  background: rgba(71, 85, 105, 0.2);
+  color: #64748b;
+}
+
+.workflow-active-badge {
+  display: block;
+  font-size: 11px;
+  color: #fbbf24;
+  font-weight: 600;
+  margin-top: 3px;
+}
+
+.step-approval-notice {
+  margin-top: 6px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #fde68a;
+}
+
+.step-rejected-notice {
+  margin-top: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #fca5a5;
+}
+
+.safety-guarantee-note {
+  background: rgba(15, 23, 42, 0.7);
+  border-left: 3px solid #38bdf8;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+}
+
+.safety-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #38bdf8;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.safety-text {
+  margin: 0;
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.modal-error-banner {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 12px;
 }
 
 .step-desc {
