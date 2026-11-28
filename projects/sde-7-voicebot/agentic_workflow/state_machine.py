@@ -138,11 +138,15 @@ class WorkflowStateMachine:
     Maintains current state and audit history of transitions.
     """
 
-    def __init__(self, initial_state: WorkflowState = WorkflowState.DRAFT):
+    def __init__(
+        self,
+        initial_state: WorkflowState = WorkflowState.DRAFT,
+        history: Optional[List[StateTransitionRecord]] = None,
+    ):
         if not isinstance(initial_state, WorkflowState):
             initial_state = WorkflowState(str(initial_state))
         self._state: WorkflowState = initial_state
-        self._history: List[StateTransitionRecord] = []
+        self._history: List[StateTransitionRecord] = list(history) if history else []
 
     @property
     def current_state(self) -> WorkflowState:
@@ -209,3 +213,56 @@ class WorkflowStateMachine:
             )
         )
         return self._state
+
+    def recover_to(
+        self,
+        target_state: WorkflowState | str = WorkflowState.RUNNING,
+        reason: Optional[str] = None,
+    ) -> WorkflowState:
+        """
+        Explicitly recover a FAILED workflow from a valid checkpoint into an active state
+        (RUNNING, PAUSED, or AWAITING_APPROVAL). Terminal SUCCEEDED and CANCELLED states
+        remain permanently locked and cannot be recovered.
+        """
+        if not isinstance(target_state, WorkflowState):
+            try:
+                target_state = WorkflowState(str(target_state))
+            except ValueError as err:
+                raise IllegalStateTransitionError(
+                    current_state=self._state,
+                    target_state=None,  # type: ignore
+                    valid_targets=set(),
+                    message=f"Unknown recovery target state '{target_state}'.",
+                ) from err
+
+        recoverable_targets = {
+            WorkflowState.RUNNING,
+            WorkflowState.PAUSED,
+            WorkflowState.AWAITING_APPROVAL,
+        }
+        if self._state != WorkflowState.FAILED or target_state not in recoverable_targets:
+            raise IllegalStateTransitionError(
+                current_state=self._state,
+                target_state=target_state,
+                valid_targets=recoverable_targets if self._state == WorkflowState.FAILED else set(),
+                message=(
+                    f"Cannot recover from state '{self._state.value}' to '{target_state.value}'. "
+                    f"Only FAILED workflows can recover into {[s.value for s in sorted(recoverable_targets, key=lambda s: s.value)]}."
+                ),
+            )
+
+        from_state = self._state
+        self._state = target_state
+        self._history.append(
+            StateTransitionRecord(
+                from_state=from_state,
+                to_state=target_state,
+                timestamp=_get_utc_now_iso(),
+                reason=reason or "Recovered workflow from checkpoint",
+            )
+        )
+        return self._state
+
+    def restore_history(self, records: List[StateTransitionRecord]) -> None:
+        """Restore transition history records (e.g., when loading from a checkpoint)."""
+        self._history = list(records)

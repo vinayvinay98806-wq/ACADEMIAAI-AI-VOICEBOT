@@ -1,4 +1,4 @@
-# W4 – Agentic Workflow: Architecture, Policies, Approval Management & Safe Execution (Week 2)
+# W4 – Agentic Workflow: Checkpoint & Resume, Audit Trail & Approval Integration (Weeks 1–3)
 
 This directory contains the complete implementation for **Worker 4 (Agentic Workflow)** within the AcademiaAI Voicebot initiative, strictly isolated under `projects/sde-7-voicebot/`.
 
@@ -43,23 +43,30 @@ projects/sde-7-voicebot/
 ├── agentic_workflow/
 │   ├── __init__.py           # Package exports & public API
 │   ├── schemas.py            # The 5 core schemas (defined exactly once)
-│   ├── state_machine.py      # 7-state FSM with transition validation
+│   ├── state_machine.py      # 7-state FSM + explicit checkpoint recovery transition
 │   ├── mock_tools.py         # Deterministic mock tools, specs, & ToolRegistry
 │   ├── validator.py          # PlanValidator: DAG cycles, schemas, order, scopes
-│   ├── approval_manager.py   # ApprovalManager: requests, decisions, expiry, audit
-│   └── executor.py           # WorkflowExecutor: timeouts, retries, outputs, cancellation
+│   ├── approval_manager.py   # ApprovalManager: requests, decisions, expiry, binding, snapshot
+│   ├── checkpoint.py         # Week 3: WorkflowCheckpoint, InMemory/File stores, recovery policy
+│   ├── idempotency.py        # Week 3: IdempotencyStore, key generation, concurrent flight lock
+│   ├── audit.py              # Week 3: StepAuditRecord, ProgressEvents, ExecutionHistory
+│   ├── integrations.py       # Week 3: WorkflowProposals, BackendApproval, ApprovalUIService
+│   └── executor.py           # WorkflowExecutor: unified execution, checkpoint, audit, approvals
 ├── tests/
 │   ├── __init__.py
-│   ├── test_schemas.py               # Schemas, fields, expiry, serialization
-│   ├── test_state_machine.py         # Valid/illegal transitions & terminal locks
-│   ├── test_mock_tools.py            # Tool specs, registry, schemas, scopes
-│   ├── test_validator.py             # Plan structure, DAG cycles, execution order
-│   ├── test_approval_enforcement.py  # Consequential gating & tool invocation safety proofs
-│   ├── test_approval_manager.py      # ApprovalManager unit tests, TTL expiry, audit log
-│   ├── test_executor.py              # End-to-end execution, pause/resume, cancel
-│   └── test_policy_and_security.py   # 16 mandated policy & security compliance proofs
-├── demo.py                   # Standalone multi-scenario demonstration script
-└── README.md                 # Architecture, user guide, and test reports
+│   ├── test_schemas.py                      # Schemas, fields, expiry, serialization
+│   ├── test_state_machine.py                # Valid/illegal transitions & terminal locks
+│   ├── test_mock_tools.py                   # Tool specs, registry, schemas, scopes
+│   ├── test_validator.py                    # Plan structure, DAG cycles, execution order
+│   ├── test_approval_enforcement.py         # Consequential gating & tool invocation safety proofs
+│   ├── test_approval_manager.py             # ApprovalManager unit tests, TTL expiry, audit log
+│   ├── test_executor.py                     # End-to-end execution, pause/resume, cancel
+│   ├── test_policy_and_security.py          # 16 mandated policy & security compliance proofs
+│   ├── test_checkpoint_and_idempotency.py   # Week 3 Days 15-16: checkpoint, resume, recovery, idempotency
+│   ├── test_audit_and_progress.py           # Week 3 Days 17-18: step audit, progress events, history
+│   └── test_integrations_and_approval.py    # Week 3 Days 19-21: proposals, backend sync, UI security
+├── demo.py                   # Standalone Weeks 2 & 3 multi-scenario demonstration script
+└── README.md                 # Architecture, API contracts, mock-mode guide, and test reports
 ```
 
 ---
@@ -309,3 +316,66 @@ python projects/sde-7-voicebot/demo.py
 | Comprehensive Policy Tests | 83 tests passing with 100% success rate across all modules | **COMPLETE** |
 | Standalone Demonstrations | Demos A, B, C, and D verified and functional | **COMPLETE** |
 | Backward Compatibility | All Week 1 interfaces and contracts 100% preserved | **COMPLETE** |
+
+---
+
+## 11. Week 3 Architecture, API Contracts & Integration Guide
+
+### 11.1 Checkpoint, Resume & Failed-Step Recovery (`checkpoint.py`)
+
+- **Checkpoint Architecture**:
+  - `WorkflowCheckpoint` captures `checkpoint_id`, `workflow_id`, `execution_id`, `current_state`, `completed_steps`, `pending_steps`, `failed_step_info`, `step_results`, `retry_info`, `timestamp`, `idempotency_info`, `plan_snapshot`, `state_history`, `approval_snapshot`, `audit_snapshot`, and a SHA-256 `checksum`.
+  - `CheckpointStore` provides `InMemoryCheckpointStore` (default) and `FileCheckpointStore(directory)` (JSON persistence across process restarts).
+  - `validate_checkpoint()` rejects missing, malformed, checksum-tampered, or terminal (`succeeded`/`cancelled`) checkpoints with `CheckpointNotFoundError` or `InvalidCheckpointError`.
+- **Resume & Recovery Flow**:
+  - `executor.save_checkpoint(reason)` / automatic checkpointing on lifecycle milestones.
+  - `WorkflowExecutor.from_checkpoint(checkpoint_or_id, checkpoint_store=...)` reconstructs a fresh executor from a stored snapshot.
+  - `executor.resume_from_checkpoint(checkpoint_or_id=None)` restores state, skips all `completed` steps (never executing them twice), recovers eligible `failed` steps via `state_machine.recover_to(WorkflowState.RUNNING)`, and resumes pending steps in order.
+  - `executor.recover_failed_step(step_id=None)` evaluates `evaluate_step_recoverability()`: permanently failed steps (rejection, expiry, permission violation, `permanent_failure=True`, or exhausted `max_recovery_attempts`) are safely rejected without re-invoking tools.
+
+### 11.2 Idempotency Mechanism (`idempotency.py`)
+
+- `IdempotencyStore.generate_key(...)` accepts explicit `idempotency_key` values (e.g., `step.metadata["idempotency_key"]`) or computes a deterministic SHA-256 key scoped to `(workflow_id, step_id, tool_name, payload)`.
+- `IdempotencyStore.execute(key, action, ...)` stores successful `WorkflowResult` outcomes in `IdempotencyRecord` and replays the stored result on repeated calls (`metadata["idempotency_replay"] = True`) without invoking the tool again.
+- Payload mismatch on an existing key raises `IdempotencyError`.
+- **Concurrency Safety**: An internal per-key `_InFlightExecution` (`threading.Event`) coordinates concurrent duplicate callers so the underlying tool executes strictly once while all concurrent callers receive the leader's result.
+
+### 11.3 Step-Level Audit Trail & Progress Events (`audit.py`)
+
+- **`StepAuditRecord`** (frozen dataclass): `record_id`, `sequence`, `workflow_id`, `execution_id`, `step_id`, `step_name`, `event_type`, `previous_state`, `new_state`, `start_timestamp`, `completion_timestamp`, `duration_ms`, `result_status`, `error`, `retry_count`, `approval_reference`, `metadata`.
+- **`ProgressEventType`** (`WorkflowProgressEvent`): `workflow_started`, `workflow_checkpoint_created`, `step_started`, `step_completed`, `step_failed`, `step_retrying`, `workflow_paused`, `workflow_resumed`, `approval_requested`, `approval_granted`, `approval_rejected`, `approval_expired`, `workflow_completed`, `workflow_failed`, `workflow_cancelled`.
+- **`AuditTrailManager`**: Append-only per-workflow storage with monotonic sequence ordering, subscriber callbacks (`executor.subscribe_progress(fn)`), `executor.get_execution_history()`, and checkpoint snapshot export/restore so audit records survive checkpoint and resume without overwriting.
+
+### 11.4 External Worker Adapters & Mock Mode (`integrations.py`)
+
+> **Known Limitations / Cross-Worker Dependencies:** Worker 3 (`WorkflowProposals`), Worker 5 (backend approval API), and Worker 6 (frontend UI) reside on separate remote branches not present in this W4 workspace. All three integrations are implemented as clearly isolated, documented adapters with **mock mode as the default** and zero external credentials required.
+
+1. **`WorkflowProposalAdapter` (Worker 3 `WorkflowProposals` Adapter)**:
+   - `validate_and_convert(proposal, authorized_permissions=...) -> WorkflowPlan`
+   - `convert_workflow_proposals(workflow_proposals, authorized_permissions=...) -> List[WorkflowPlan]`
+   - Accepts dict payloads or duck-typed models, validates structure/tools/schemas/DAG/permissions via `PlanValidator`, preserves `proposal_id`, `proposals_batch_id`, and `workflow_id`, and raises `ProposalValidationError` on invalid or unsupported proposals.
+2. **`BackendApprovalClient` (Worker 5 Approval State Adapter)**:
+   - Default mock implementation: `MockBackendApprovalClient(available=True)` (`mode = "mock"`).
+   - Configurable live adapter: `HttpBackendApprovalClient(base_url=...)` (`mode = "http"`), disabled unless explicitly configured.
+   - `WorkflowExecutor.sync_backend_approval(step_id)` queries authoritative backend state (`PENDING`, `APPROVED`, `REJECTED`, `EXPIRED`) before every consequential execution; stale local `APPROVED` values cannot bypass backend `PENDING`/`REJECTED`/`EXPIRED` or `BackendUnavailableError`.
+3. **`ApprovalUIService` (Worker 6 UI Approval/Rejection Contract)**:
+   - `register_executor(executor)`, `list_pending_approvals(workflow_id=None) -> List[UIApprovalView]`, `get_approval_status(workflow_id, step_id) -> UIApprovalView`, `submit_decision(UIApprovalAction) -> UIApprovalResponse`.
+   - Enforces `workflow_id`/`step_id`/`request_id` binding, expiry checks (`APPROVAL_EXPIRED`), duplicate UI submission deduplication (`submission_id` cache + `ALREADY_DECIDED`), and safe resume on approval.
+
+### 11.5 Week 3 Verification & Mock-Mode Instructions
+
+Run the complete Weeks 1–3 suite (no external services or credentials needed; mock mode is the default):
+
+```bash
+python3.12 -m unittest discover -s projects/sde-7-voicebot/tests -v
+python3.12 projects/sde-7-voicebot/demo.py
+```
+
+#### Verified Weeks 1–3 Test Summary
+
+- **Existing Week 1–2 suites (8 files):** 83 tests — **PASSED**
+- **New Week 3 suites (3 files):** 29 tests — **PASSED**
+  - `tests/test_checkpoint_and_idempotency.py`: 11 tests (checkpoint creation, strict checksum validation, resume after failure, no duplicate step execution, recovery limits & permanent failure, duplicate & concurrent idempotency including failure/exception/timeout/payload-mismatch, invalid/missing/corrupted file checkpoints, downstream reference & skipped step recovery)
+  - `tests/test_audit_and_progress.py`: 6 tests (step-level audit fields, chronological progress events & subscriber delivery, failing subscriber isolation, failed/retried tracking & immutability, cancellation/rejection/expiry progress events, checkpoint/resume audit preservation)
+  - `tests/test_integrations_and_approval.py`: 12 tests (valid/invalid `WorkflowProposals`, consequential downgrade prevention, malformed proposal errors, cross-workflow `ApprovalManager` isolation, backend state retrieval/expiry/HTTP error & stale local prevention, backend unavailability, UI approve/duplicate/concurrent/cross-workflow `submission_id`/reject/expired/wrong-binding security)
+- **Total:** **112 tests passed in 0.463s** (`OK`), plus reproducible Demos A–F in `demo.py`.

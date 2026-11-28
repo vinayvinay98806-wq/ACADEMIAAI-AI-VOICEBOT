@@ -8,7 +8,10 @@ Unit tests for WorkflowExecutor end-to-end execution, lifecycle, and error handl
 """
 
 import sys
+import threading
+import time
 from pathlib import Path
+from typing import Any, Dict
 
 # Add project root to sys.path for direct or discovered execution
 _project_root = Path(__file__).resolve().parent.parent
@@ -18,7 +21,7 @@ if str(_project_root) not in sys.path:
 import unittest
 from agentic_workflow.executor import WorkflowExecutor
 from agentic_workflow.mock_tools import create_default_registry
-from agentic_workflow.schemas import WorkflowPlan, WorkflowStep
+from agentic_workflow.schemas import ToolSpec, WorkflowPlan, WorkflowResult, WorkflowStep
 from agentic_workflow.state_machine import WorkflowState
 
 
@@ -154,6 +157,47 @@ class TestWorkflowExecutor(unittest.TestCase):
         self.assertEqual(step_unreached.status, "pending")
         # Step 2 was never executed
         self.assertEqual(self.registry.get_invocation_count("academic_lookup"), 1)
+
+    def test_hung_tool_timeout_does_not_block_executor(self):
+        """Verify ThreadPoolExecutor timeout returns promptly without waiting for a hung tool."""
+        started = threading.Event()
+        release = threading.Event()
+
+        def hung_tool(payload: Dict[str, Any]) -> WorkflowResult:
+            started.set()
+            release.wait(timeout=5.0)
+            return WorkflowResult.ok({"done": True})
+
+        self.registry.register(
+            ToolSpec(name="hung_tool", description="Blocks until released", is_idempotent=True),
+            hung_tool,
+        )
+        plan = WorkflowPlan(
+            workflow_id="wf-hung-tool",
+            goal="Verify non-blocking timeout on hung tool",
+            steps=[
+                WorkflowStep(
+                    step_id="step_hung",
+                    tool_name="hung_tool",
+                    input_payload={},
+                    timeout_seconds=0.05,
+                )
+            ],
+        )
+
+        executor = WorkflowExecutor(plan=plan, registry=self.registry)
+        t0 = time.monotonic()
+        try:
+            res = executor.run()
+        finally:
+            elapsed = time.monotonic() - t0
+            release.set()
+
+        self.assertFalse(res.success)
+        self.assertTrue(started.is_set())
+        self.assertTrue(res.metadata.get("timeout"))
+        self.assertEqual(executor.current_state, WorkflowState.FAILED)
+        self.assertLess(elapsed, 0.5, f"Executor blocked on hung tool for {elapsed:.2f}s")
 
 
 if __name__ == "__main__":
